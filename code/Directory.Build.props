@@ -1,0 +1,19 @@
+<Project>
+
+  <!-- Settings every .NET project in the repository shares (ADR-0006). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <!--
+      NuGet's audit warns about packages with known vulnerabilities at restore. High and
+      critical ones fail the build like any warning; low and moderate ones stay warnings,
+      so a newly published advisory of little weight does not stop every pull request.
+    -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1901;NU1902</WarningsNotAsErrors>
+  </PropertyGroup>
+
+</Project>

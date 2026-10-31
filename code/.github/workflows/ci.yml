@@ -1,0 +1,163 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Format, lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      # Also runs `prisma generate` via the api postinstall script.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm test:scripts
+      - run: pnpm build
+
+  api-e2e:
+    name: API e2e (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg18
+        env:
+          POSTGRES_USER: languze
+          POSTGRES_PASSWORD: languze
+          POSTGRES_DB: languze
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U languze -d languze"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://languze:languze@localhost:5432/languze
+      # Not a secret: a throwaway value so the API starts in CI. Production uses a real one.
+      AUTH_SECRET: ci-only-value-ci-only-value-ci-ok
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Photo storage comes from docker-compose rather than a service container, so it
+      # runs with the same image, version and S3 identities file as a developer's machine.
+      - run: docker compose up -d --wait storage
+      - run: pnpm --filter @languze/api exec prisma migrate deploy
+      - run: pnpm test:e2e
+
+  contract:
+    name: .NET build, unit and API contract tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg18
+        env:
+          POSTGRES_USER: languze
+          POSTGRES_PASSWORD: languze
+          POSTGRES_DB: languze
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U languze -d languze"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://languze:languze@localhost:5432/languze
+      # Not a secret: a throwaway value so the API starts in CI. Production uses a real one.
+      AUTH_SECRET: ci-only-value-ci-only-value-ci-ok
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - run: pnpm install --frozen-lockfile
+      - run: docker compose up -d --wait storage maildev
+      - run: pnpm --filter @languze/api exec prisma migrate deploy
+      - run: dotnet restore LanguZe.slnx --locked-mode
+      - run: dotnet format LanguZe.slnx --verify-no-changes --no-restore
+      - run: dotnet build LanguZe.slnx --no-restore
+      # Unit tests and the architecture rules of ADR-0006; no database needed.
+      - run: dotnet test --project apps/api-dotnet/LanguZe.Api.Tests --no-build
+      # The EF Core migrations, the cutover migration above all, on throwaway databases.
+      - run: dotnet test --project apps/api-dotnet/LanguZe.Api.IntegrationTests --no-build
+      # Starts the NestJS API with the fake AI provider and one trusted proxy hop.
+      - run: pnpm test:contract
+      # The same tests against the ASP.NET Core API, for the slices ported so far, then
+      # its OpenAPI document against apps/api/openapi.json on their paths (ADR-0006).
+      - run: pnpm test:contract --target dotnet
+
+  browser:
+    name: Browser smoke tests (Playwright)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg18
+        env:
+          POSTGRES_USER: languze
+          POSTGRES_PASSWORD: languze
+          POSTGRES_DB: languze
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U languze -d languze"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://languze:languze@localhost:5432/languze
+      # Not a secret: a throwaway value so the API starts in CI. Production uses a real one.
+      AUTH_SECRET: ci-only-value-ci-only-value-ci-ok
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Mail goes to Maildev, which the tests read verification and reset links from.
+      - run: docker compose up -d --wait storage maildev
+      - run: pnpm --filter @languze/api exec prisma migrate deploy
+      - run: pnpm --filter @languze/web exec playwright install --with-deps chromium webkit
+      # Starts the API (fake AI provider) and the web app itself (apps/web/playwright.config.ts).
+      - run: pnpm test:browser
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          retention-days: 7
