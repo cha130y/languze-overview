@@ -13,6 +13,10 @@ This repository is a curated selection from LanguZe's repository: its design doc
 
 ## The app
 
+![Playing a world: the boxes on a photo, a correct answer, a wrong one, an accepted variant, the summary and the tutor](screenshots/00-playing-a-world.gif)
+
+Thirty seconds of a world being played, at twice the speed.
+
 | A world from a photo                                                              | Its words                                                                                           | Identify game                                                 |
 | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
 | ![Boxes the AI drew around the objects in a room](screenshots/02-world-boxes.png) | ![Each word with its Thai meaning, CEFR level and example sentence](screenshots/03-world-words.png) | ![A correct answer earns XP](screenshots/04-game-correct.png) |
@@ -26,6 +30,8 @@ In the last picture the tutor answers "why was _carpet_ wrong for the rug?" by r
 ## Where to look
 
 A few files show most of the work. Paths are under [`code/`](code/), which keeps the original repository's layout.
+
+**Two APIs, on purpose.** [`apps/api`](code/apps/api/) is the NestJS API that runs in production. [`apps/api-dotnet`](code/apps/api-dotnet/) is its ASP.NET Core port, still in progress. They do the same thing, and the [contract suite](code/tests/api-contract/) holds them to it. Where a file has a twin, both are listed below, the NestJS one first. Read either one: the same names, rules and requirement IDs appear in both.
 
 **Full-stack**
 
@@ -50,7 +56,7 @@ The code was written with Claude Code, inside a harness that makes the AI's work
 - [`CLAUDE.md`](code/CLAUDE.md), the [rules](code/.claude/rules/) and the [agents](code/.claude/agents/): what the AI must and must not do, such as reproducing NestJS's behaviour during the port rather than improving it
 - [`/port-slice`](code/.claude/skills/port-slice/SKILL.md): the workflow for each slice of the port, with contract tests first, against NestJS, then against .NET
 - [`settings.json`](code/.claude/settings.json) and its [hooks](code/.claude/scripts/): environment files the AI cannot read, and formatting run after every edit
-- The [pull requests](pull-requests/): each says what the checks caught, including mistakes the AI made and the test that found them
+- The [pull requests](pull-requests/README.md), five from building Release 1.0 and three from the port: each has its own verification, and those from the port also say what the checks caught, including mistakes the AI made and the test that found them
 
 **Backend and architecture**
 
