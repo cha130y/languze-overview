@@ -15,19 +15,9 @@ The app is public at [languze.com](https://languze.com). The source repository r
 
 [Watch the 1:44 LanguZe introduction](media/Languze-introduction.mp4) (1080p MP4, 50.5 MB).
 
-![Playing a world: the boxes on a photo, a correct answer, a wrong one, an accepted variant, the summary and the tutor](screenshots/00-playing-a-world.gif)
+![Current LanguZe home screen, with navigation for photo capture, worlds, review, the AI tutor and progress](screenshots/09-home-current.png)
 
-Thirty seconds of a world being played, at twice the speed.
-
-| A world from a photo                                                              | Its words                                                                                           | Identify game                                                 |
-| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| ![Boxes the AI drew around the objects in a room](screenshots/02-world-boxes.png) | ![Each word with its Thai meaning, CEFR level and example sentence](screenshots/03-world-words.png) | ![A correct answer earns XP](screenshots/04-game-correct.png) |
-
-| A wrong answer                                                                      | An accepted variant                                            | AI tutor                                                                                 |
-| ----------------------------------------------------------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| ![The right word, its meaning and the mastery level](screenshots/05-game-wrong.png) | ![tv accepted for television](screenshots/06-game-variant.png) | ![The tutor explains a mistake from the learner's own history](screenshots/08-tutor.png) |
-
-In the last picture the tutor answers "why was _carpet_ wrong for the rug?" by reading the learner's game history through a tool, not by guessing. More: the [home page](screenshots/01-home.png) and the [game summary](screenshots/07-game-summary.png). The interface is in Thai, as the learners are (NFR-013).
+The screenshot was captured from the live app on 2026-11-25. The interface is in Thai, as the learners are (NFR-013).
 
 ## Where to look
 
