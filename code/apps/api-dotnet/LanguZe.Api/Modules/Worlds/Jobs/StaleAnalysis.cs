@@ -79,32 +79,43 @@ internal sealed partial class StaleAnalysis(IServiceScopeFactory scopes, TimePro
             return 0;
         }
 
-        var ids = stale.Select(analysis => analysis.Id).ToList();
-        var worldIds = stale.Where(analysis => analysis.WorldId is not null).Select(analysis => analysis.WorldId!.Value).ToList();
+        var released = 0;
         await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
         {
-            // Released, because the learner's photo may have been perfectly good (FR-025).
-            await db.Analyses.Where(analysis => ids.Contains(analysis.Id))
-                .ExecuteUpdateAsync(
-                    setters => setters
-                        .SetProperty(analysis => analysis.Status, AnalysisStatus.Failed)
-                        .SetProperty(analysis => analysis.FailureReason, AnalysisFailure.TimedOut)
-                        .SetProperty(analysis => analysis.FinishedAt, now),
-                    cancellationToken);
+            foreach (var analysis in stale)
+            {
+                // The worker may have finished since the read above. Update its world only
+                // when this statement actually changes the analysis from IN_PROGRESS.
+                var changed = await db.Analyses
+                    .Where(row => row.Id == analysis.Id && row.Status == AnalysisStatus.InProgress && row.StartedAt < staleBefore)
+                    .ExecuteUpdateAsync(
+                        setters => setters
+                            .SetProperty(row => row.Status, AnalysisStatus.Failed)
+                            .SetProperty(row => row.FailureReason, AnalysisFailure.TimedOut)
+                            .SetProperty(row => row.FinishedAt, now),
+                        cancellationToken);
+                if (changed == 0)
+                {
+                    continue;
+                }
 
-            // Only a world still waiting: one that finished another way is left alone.
-            await db.Worlds.Where(world => worldIds.Contains(world.Id) && world.Status == WorldStatus.Analyzing)
-                .ExecuteUpdateAsync(
-                    setters => setters
-                        .SetProperty(world => world.Status, WorldStatus.Failed)
-                        .SetProperty(world => world.FailureReason, AnalysisFailure.TimedOut)
-                        .SetProperty(world => world.UpdatedAt, now),
-                    cancellationToken);
+                released++;
+                if (analysis.WorldId is { } worldId)
+                {
+                    await db.Worlds.Where(world => world.Id == worldId && world.Status == WorldStatus.Analyzing)
+                        .ExecuteUpdateAsync(
+                            setters => setters
+                                .SetProperty(world => world.Status, WorldStatus.Failed)
+                                .SetProperty(world => world.FailureReason, AnalysisFailure.TimedOut)
+                                .SetProperty(world => world.UpdatedAt, now),
+                            cancellationToken);
+                }
+            }
             await transaction.CommitAsync(cancellationToken);
         }
 
-        LogReleased(stale.Count);
-        return stale.Count;
+        LogReleased(released);
+        return released;
     }
 
     /// <summary>

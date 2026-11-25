@@ -24,6 +24,44 @@ internal sealed class WorldReader(LanguZeDbContext db, IPhotoStorage storage)
             .AsSplitQuery();
 
     /// <summary>
+    /// List only the fields needed for each summary. This avoids materializing and tracking every
+    /// occurrence, vocabulary word, and mastery row for up to twenty worlds (FR-013).
+    /// </summary>
+    public async Task<List<WorldSummaryResponse>> ListSummariesAsync(Guid learnerId, CancellationToken cancellationToken)
+    {
+        var rows = await db.Worlds
+            .AsNoTracking()
+            .Where(world => world.LearnerId == learnerId)
+            .OrderByDescending(world => world.CreatedAt)
+            .Select(world => new WorldSummaryProjection(
+                world.Id,
+                world.Name,
+                world.Status,
+                world.FailureReason,
+                world.Thumbnail == null ? null : world.Thumbnail.StorageKey,
+                world.Occurrences.Count,
+                world.Occurrences.Count(occurrence => occurrence.VocabularyWord.Mastery != null && occurrence.VocabularyWord.Mastery.Level == MasteryLevel.Mastered),
+                world.CreatedAt))
+            .ToListAsync(cancellationToken);
+
+        var summaries = new List<WorldSummaryResponse>(rows.Count);
+        foreach (var row in rows)
+        {
+            summaries.Add(new WorldSummaryResponse(
+                row.Id,
+                row.Name,
+                StatusName(row.Status),
+                FailureName(row.FailureReason),
+                row.ThumbnailStorageKey is null ? null : await storage.SignedLinkAsync(row.ThumbnailStorageKey),
+                row.WordCount,
+                row.MasteredCount,
+                row.CreatedAt));
+        }
+
+        return summaries;
+    }
+
+    /// <summary>
     /// The learner's own world, or nothing. Another learner's world answers NOT_FOUND rather
     /// than FORBIDDEN, so the API never confirms that it exists (FR-008).
     /// </summary>
@@ -58,7 +96,8 @@ internal sealed class WorldReader(LanguZeDbContext db, IPhotoStorage storage)
             [.. world.Occurrences.Select(occurrence => new WorldWordResponse(
                 occurrence.Id,
                 occurrence.VocabularyWord.English,
-                occurrence.VocabularyWord.ThaiMeaning,
+                // This photo's meaning: one English word can mean another thing elsewhere (FR-043).
+                occurrence.ThaiMeaning,
                 occurrence.ExampleSentence,
                 (CefrLevelName)occurrence.CefrLevel,
                 new HighlightBoxResponse(occurrence.BoxX, occurrence.BoxY, occurrence.BoxWidth, occurrence.BoxHeight),
@@ -92,4 +131,14 @@ internal sealed class WorldReader(LanguZeDbContext db, IPhotoStorage storage)
 
     private async Task<string?> LinkToAsync(StoredPhoto? photo) =>
         photo is null ? null : await storage.SignedLinkAsync(photo.StorageKey);
+
+    private sealed record WorldSummaryProjection(
+        Guid Id,
+        string Name,
+        WorldStatus Status,
+        AnalysisFailure? FailureReason,
+        string? ThumbnailStorageKey,
+        int WordCount,
+        int MasteredCount,
+        DateTimeOffset CreatedAt);
 }

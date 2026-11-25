@@ -133,6 +133,29 @@ public sealed class PhotoPreparationTests
         };
     }
 
+    // A PNG is decoded whole, so a small file of a huge image would cost seconds of the server's time.
+    [Fact]
+    public void A_photo_of_more_than_120_million_pixels_is_refused_before_it_is_decoded()
+    {
+        using var huge = Plain(11_000, 11_000);
+        var png = huge.PngsaveBuffer(compression: 9);
+
+        var error = Assert.Throws<AppException>(() => Preparation.Prepare(png));
+
+        Assert.True(png.Length < 10 * 1024 * 1024);
+        Assert.Equal((ErrorCodes.PhotoTooLarge, 413), (error.Code, error.Status));
+        Assert.Equal("This photo has more than 120 million pixels.", error.Message);
+    }
+
+    // A 108-megapixel phone camera's photo still becomes a world.
+    [Fact]
+    public void A_photo_of_120_million_pixels_is_accepted()
+    {
+        using var largest = Plain(12_000, 10_000);
+
+        Assert.Equal(PhotoPreparation.MaxPhotoSide, Preparation.Prepare(largest.JpegsaveBuffer(q: 50)).Prepared.Width);
+    }
+
     private static Image Plain(int width, int height)
     {
         using var black = Image.Black(width, height, bands: 3);

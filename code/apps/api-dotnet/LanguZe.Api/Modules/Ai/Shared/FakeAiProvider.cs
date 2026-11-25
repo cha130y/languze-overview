@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+using System.Text.Json;
 using LanguZe.Api.Data.Entities;
 using LanguZe.Api.Modules.Ai.Contracts;
 using LanguZe.Api.Modules.Vocabulary.Contracts;
@@ -43,6 +45,9 @@ internal sealed class FakeAiProvider(FakeAiSettings settings, TimeProvider clock
         new("window", "หน้าต่าง", "The room is bright.", "Z9", [], new(0.9, 0.9, 0.5, 0.5)),
     ];
 
+    /// <summary>The fake tutor's reply, piece by piece.</summary>
+    public static readonly IReadOnlyList<string> TutorPieces = ["เข้าใจแล้วค่ะ ", "คำนี้ใช้บอกสิ่งของในห้อง ", "ตัวอย่างเช่น \"The sofa is soft.\""];
+
     private readonly Lock _gate = new();
 
     /// <summary>Used once, then forgotten: for a test that needs one call to differ.</summary>
@@ -55,6 +60,17 @@ internal sealed class FakeAiProvider(FakeAiSettings settings, TimeProvider clock
 
     /// <summary>Which rule a blocked photo breaks (FR-091).</summary>
     public BlockCategory BlockCategory { get; set; } = BlockCategory.Violence;
+
+    /// <summary>
+    /// For a test: while set, every safety check waits here until it completes, so a test can see
+    /// how many analyses run at once (<see cref="Holding"/>).
+    /// </summary>
+    public TaskCompletionSource? Hold { get; set; }
+
+    /// <summary>Safety checks waiting on <see cref="Hold"/> right now.</summary>
+    public int Holding => Volatile.Read(ref _holding);
+
+    private int _holding;
 
     /// <summary>What this provider was asked, in order, with the size of each photo.</summary>
     public List<(AiPurpose Purpose, int Bytes)> Calls { get; } = [];
@@ -71,6 +87,19 @@ internal sealed class FakeAiProvider(FakeAiSettings settings, TimeProvider clock
 
     public async Task<AiAnswer<SafetyVerdict>> CheckPhotoAsync(PhotoForAi photo, CancellationToken cancellationToken)
     {
+        if (Hold is { } hold)
+        {
+            Interlocked.Increment(ref _holding);
+            try
+            {
+                await hold.Task.WaitAsync(cancellationToken);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _holding);
+            }
+        }
+
         var behaviour = Take(AiPurpose.SafetyCheck, photo.Data.Length);
         await WaitAsync(cancellationToken);
         ThrowFor(behaviour);
@@ -92,6 +121,37 @@ internal sealed class FakeAiProvider(FakeAiSettings settings, TimeProvider clock
         };
         return new AiAnswer<IReadOnlyList<ExtractedItem>>(value, new AiUsage(820, 40 * value.Count));
     }
+
+    /// <summary>
+    /// A tutor reply, in pieces, as a real one arrives (NFR-003). It looks up the learner's weak
+    /// words whenever it is asked anything, which is how the tool path gets exercised without a
+    /// key: everything a real tutor does to the database, this does too. What it says is fixed,
+    /// because a fake that invented answers would teach a test nothing.
+    /// </summary>
+    public async IAsyncEnumerable<TutorEvent> TutorReplyAsync(TutorTurn turn, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var behaviour = Take(AiPurpose.Tutor, turn.Message.Length);
+        LastHistory = turn.History;
+        ThrowFor(behaviour);
+
+        var weak = turn.Tools.FirstOrDefault(tool => tool.Name == "weak_words");
+        // The tool result is data about the learner; it is never acted upon here.
+        LastToolResult = weak is null ? null : await weak.Run(new Dictionary<string, JsonElement> { ["count"] = JsonSerializer.SerializeToElement(3) }, cancellationToken);
+
+        foreach (var piece in TutorPieces)
+        {
+            await WaitAsync(cancellationToken);
+            yield return new TutorDelta(piece);
+        }
+
+        yield return new TutorDone(new AiUsage(400, 60));
+    }
+
+    /// <summary>What the last reply looked up, which a test reads to check the tool path.</summary>
+    public object? LastToolResult { get; private set; }
+
+    /// <summary>What the last reply was reminded of, which a test reads to check the history.</summary>
+    public IReadOnlyList<TutorExchange> LastHistory { get; private set; } = [];
 
     /// <summary>The purpose as ai_purpose spells it, lower case.</summary>
     private static string PurposeName(AiPurpose purpose) => purpose switch

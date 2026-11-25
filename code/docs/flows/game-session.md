@@ -27,12 +27,12 @@ sequenceDiagram
   end
   W->>A: Get the next question
   A->>D: Load the first unanswered question, skipping words removed since the session started
-  A-->>W: Photo link, highlight box, question number (never the answer)
+  A-->>W: Photo link, highlight box, optional arrow, question number (never the answer)
   W-->>L: Show the question
 ```
 
 - Words are picked `NEW` and `LEARNING` first, then `FAMILIAR`, then `MASTERED`, in random order within each level (FR-030). The questions and their order are fixed when the session is created.
-- The response contains the highlight box and a short-lived photo link, but not the word or its accepted variants, which stay on the server until the learner answers (FR-032, S5).
+- The response contains the highlight box, an arrow when the occurrence has one, and a short-lived photo link. The arrow points to the object and carries the question number on its tail; without one, the box is the cue. The word and its accepted variants stay on the server until the learner answers (FR-031, FR-032, S5).
 - A reload or a return within 24 hours continues at step 9, with the next unanswered question (FR-036, V17).
 
 ## 2. Answer a question (UC-031)

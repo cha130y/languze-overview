@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from './zod';
 
 /** 1–50 characters, the same rule the API applies (V3, FR-010, FR-016). */
 export const worldNameSchema = z

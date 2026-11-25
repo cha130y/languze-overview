@@ -58,6 +58,82 @@ public sealed class WorldCreationTests
         });
     }
 
+    // A burst of uploads does not call the provider and decode photos all at once: the rest wait their turn.
+    [Fact]
+    public async Task No_more_than_four_analyses_run_at_once_and_the_rest_wait_their_turn()
+    {
+        await using var api = await ApiHost.StartAsync();
+        var provider = api.Service<FakeAiProvider>();
+        var runner = api.Service<AnalysisRunner>();
+        provider.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var worlds = new List<Guid>();
+        // Five learners with a photo each (the limit of sign-ups from one address), so no two
+        // analyses save the same learner's words: four run, one waits.
+        for (var learner = 1; learner <= 5; learner++)
+        {
+            using var browser = await Learners.VerifiedAsync(api, $"burst{learner}@example.com");
+            using var response = await Learners.PostWorldAsync(browser, Learners.Photo(800, 600));
+            worlds.Add(Guid.Parse((await ApiHost.BodyAsync(response)).GetProperty("id").GetString()!));
+        }
+
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (provider.Holding < AnalysisRunner.MaxRunning && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+
+        // Given time to start, the fifth still waits for a slot.
+        await Task.Delay(500, TestContext.Current.CancellationToken);
+        Assert.Equal(AnalysisRunner.MaxRunning, provider.Holding);
+
+        provider.Hold.SetResult();
+        foreach (var world in worlds)
+        {
+            await runner.SettledAsync(world);
+        }
+
+        await using var db = api.Database.Context();
+        Assert.All(await db.Worlds.ToListAsync(TestContext.Current.CancellationToken), world => Assert.Equal(WorldStatus.Ready, world.Status));
+        Assert.Equal(5, await db.Worlds.CountAsync(TestContext.Current.CancellationToken));
+    }
+
+    // FR-043: two photos of one learner analysed at once, both with a sofa, give one word with two
+    // occurrences; the second no longer breaks the unique word and fails its world.
+    [Fact]
+    public async Task Two_analyses_of_one_learner_saving_the_same_words_at_once_both_succeed()
+    {
+        await using var api = await ApiHost.StartAsync();
+        var provider = api.Service<FakeAiProvider>();
+        var runner = api.Service<AnalysisRunner>();
+        using var browser = await Learners.VerifiedAsync(api, "together@example.com");
+        provider.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var worlds = new List<Guid>();
+        for (var photo = 0; photo < 2; photo++)
+        {
+            using var response = await Learners.PostWorldAsync(browser, Learners.Photo(800, 600));
+            worlds.Add(Guid.Parse((await ApiHost.BodyAsync(response)).GetProperty("id").GetString()!));
+        }
+
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (provider.Holding < 2 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+
+        provider.Hold.SetResult();
+        foreach (var world in worlds)
+        {
+            await runner.SettledAsync(world);
+        }
+
+        await using var db = api.Database.Context();
+        Assert.All(await db.Worlds.ToListAsync(TestContext.Current.CancellationToken), world => Assert.Equal(WorldStatus.Ready, world.Status));
+        var words = await db.VocabularyWords.Select(word => word.English).ToListAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(words.Distinct().Count(), words.Count);
+        var sofa = await db.VocabularyWords.SingleAsync(word => word.English == "sofa", TestContext.Current.CancellationToken);
+        Assert.Equal(2, await db.WordOccurrences.CountAsync(occurrence => occurrence.VocabularyWordId == sofa.Id, TestContext.Current.CancellationToken));
+    }
+
     // FR-024, FR-025: each way an analysis can fail ends the world FAILED and gives the analysis back.
     [Theory]
     [InlineData("PROVIDER_ERROR", AnalysisFailure.ProviderError, AiOutcome.Failed)]

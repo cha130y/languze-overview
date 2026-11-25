@@ -24,7 +24,7 @@ public sealed class User : IdentityUser<Guid>
     /// <summary>Empty only for a provider sign-up that has not accepted the Terms yet (FR-090, U5).</summary>
     public DateTimeOffset? TermsAcceptedAt { get; set; }
 
-    /// <summary>Given at sign-up; learners must turn 18 this year (FR-090, V20).</summary>
+    /// <summary>Given at sign-up; learners must be 20 on every day of this year (FR-090, V20).</summary>
     public short? BirthYear { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }

@@ -55,8 +55,7 @@ public sealed class AiProviderException(AiFailure failure, string message, Excep
 /// What LanguZe asks an AI provider to do (ai-provider.ts; AIR-001). Business rules depend
 /// on this interface and never on a provider's SDK, so a provider change is a new adapter.
 /// The two photo jobs are separate calls on purpose: a photo is classified before it is
-/// described, so a blocked photo never reaches extraction (FR-092, ADR-0004). The tutor's
-/// part arrives with the tutor slice.
+/// described, so a blocked photo never reaches extraction (FR-092, ADR-0004).
 /// </summary>
 public interface IAiProvider
 {
@@ -74,4 +73,12 @@ public interface IAiProvider
     /// returns is untrusted input: the caller checks every item (AIR-003, FR-023).
     /// </summary>
     Task<AiAnswer<IReadOnlyList<ExtractedItem>>> ExtractVocabularyAsync(PhotoForAi photo, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The tutor's reply, piece by piece (FR-070, FR-073, NFR-003). The provider runs the tool
+    /// conversation itself, calling the tools LanguZe handed it, so the protocol stays the
+    /// provider's business while the data stays LanguZe's. Whatever comes back is text for a
+    /// learner to read, never an instruction.
+    /// </summary>
+    IAsyncEnumerable<TutorEvent> TutorReplyAsync(TutorTurn turn, CancellationToken cancellationToken);
 }

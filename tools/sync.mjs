@@ -5,12 +5,11 @@
 //   node tools/sync.mjs <ref>      # any commit, branch or tag LanguZe knows
 //
 // It copies only the files manifest.json lists that git tracks at that commit, so
-// untracked or ignored files, such as environment files, cannot come along. code/ is
-// emptied first, so a file deleted there goes here too. It then stops with an error if
-// a copied file looks like it holds a secret or a personal address, or if a link in
-// README.md points to a file that is not here. Nothing is committed: review the diff.
+// untracked or ignored files, such as environment files, cannot come along. It builds
+// and validates a staged replacement, preserving code/ if the manifest, secret scan
+// or README link check fails. Nothing is committed: review the diff.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
 
 const manifest = JSON.parse(readFileSync('tools/manifest.json', 'utf8'));
@@ -24,19 +23,29 @@ if (!process.argv[2]) {
 const commit = git('rev-parse', '--short', `${ref}^{commit}`).toString().trim();
 const tracked = git('ls-tree', '-r', '--name-only', commit).toString().split('\n').filter(Boolean);
 
-rmSync('code', { recursive: true, force: true });
-const copied = [];
-for (const entry of manifest.include) {
-  const matches = entry.endsWith('/') ? tracked.filter((file) => file.startsWith(entry)) : tracked.filter((file) => file === entry);
-  if (matches.length === 0) {
-    throw new Error(`Nothing tracked at ${commit} matches ${entry}`);
-  }
-  for (const file of matches) {
-    mkdirSync(dirname(join('code', file)), { recursive: true });
-    writeFileSync(join('code', file), git('show', `${commit}:${file}`));
-    copied.push(file);
-  }
+const matchesEntry = (entry) => entry.endsWith('/')
+  ? tracked.filter((file) => file.startsWith(entry))
+  : tracked.filter((file) => file === entry);
+const missing = manifest.include.filter((entry) => matchesEntry(entry).length === 0);
+if (missing.length > 0) {
+  console.error(`Nothing tracked at ${commit} matches these manifest entries:`);
+  for (const entry of missing) console.error(`- ${entry}`);
+  console.error('Update tools/manifest.json. The existing code/ snapshot was not changed.');
+  process.exit(1);
 }
+
+// Build and validate a complete replacement beside code/. Do not touch the current
+// snapshot until the manifest, secret scan and README links have all passed.
+const stage = mkdtempSync(join(process.cwd(), '.code-sync-'));
+const copied = [];
+try {
+  for (const entry of manifest.include) {
+    for (const file of matchesEntry(entry)) {
+      mkdirSync(dirname(join(stage, file)), { recursive: true });
+      writeFileSync(join(stage, file), git('show', `${commit}:${file}`));
+      copied.push(file);
+    }
+  }
 
 // What a secret or a personal address looks like. A match stops the sync: look at the
 // file, and either leave it out of the manifest or add the value to the allowed list
@@ -54,7 +63,7 @@ const textExtensions = new Set(['.cs', '.ts', '.tsx', '.mjs', '.js', '.json', '.
 const findings = [];
 for (const file of copied) {
   if (!textExtensions.has(extname(file))) continue;
-  const text = readFileSync(join('code', file), 'utf8');
+  const text = readFileSync(join(stage, file), 'utf8');
   for (const [pattern, what] of suspicious) {
     if (pattern.test(text)) findings.push(`${file}: ${what}`);
   }
@@ -64,12 +73,32 @@ for (const file of copied) {
 const readme = readFileSync('README.md', 'utf8');
 const broken = [...readme.matchAll(/\]\(([^)#\s]+)(?:#[^)]*)?\)/g)]
   .map((match) => match[1])
-  .filter((link) => !/^[a-z]+:/.test(link) && !existsSync(link));
+  .filter((link) => {
+    if (/^[a-z]+:/i.test(link)) return false;
+    const target = link.startsWith('code/') ? join(stage, link.slice('code/'.length)) : link;
+    return !existsSync(target);
+  });
 
 console.log(`Copied ${copied.length} files from LanguZe at ${commit} into code/`);
 if (findings.length > 0 || broken.length > 0) {
   for (const finding of findings) console.error(`Looks like a secret: ${finding}`);
   for (const link of broken) console.error(`Broken link in README.md: ${link}`);
-  process.exit(1);
+  console.error('The existing code/ snapshot was not changed.');
+  process.exitCode = 1;
+} else {
+  const backup = `.code-backup-${process.pid}`;
+  if (existsSync(backup)) throw new Error(`Refusing to replace existing backup ${backup}`);
+  const hadCode = existsSync('code');
+  if (hadCode) renameSync('code', backup);
+  try {
+    renameSync(stage, 'code');
+  } catch (error) {
+    if (hadCode) renameSync(backup, 'code');
+    throw error;
+  }
+  if (hadCode) rmSync(backup, { recursive: true, force: true });
+  console.log('No secrets found, and every link in README.md works. Review the diff, then commit.');
 }
-console.log('No secrets found, and every link in README.md works. Review the diff, then commit.');
+} finally {
+  if (existsSync(stage)) rmSync(stage, { recursive: true, force: true });
+}

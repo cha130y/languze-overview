@@ -55,7 +55,9 @@ internal sealed class AnalysisWork(
             throw new AnalysisFailedException(AnalysisFailure.TooFewWords);
         }
 
-        await SaveAsync(analysisId, worldId, items);
+        // Placed before the transaction opens: reading the photo's edges takes a moment.
+        var arrows = EdgeMap.TryOf(photo.Data) is { } edges ? ArrowPlacement.Place(items, edges) : new Arrow?[items.Count];
+        await SaveAsync(analysisId, worldId, items, arrows);
     }
 
     /// <summary>A failure of LanguZe or its provider: the analysis is released (FR-025).</summary>
@@ -63,16 +65,19 @@ internal sealed class AnalysisWork(
     {
         var now = clock.GetUtcNow();
         await using var transaction = await db.Database.BeginTransactionAsync();
-        await db.Worlds.Where(world => world.Id == worldId)
-            .ExecuteUpdateAsync(setters => setters
-                .SetProperty(world => world.Status, WorldStatus.Failed)
-                .SetProperty(world => world.FailureReason, reason)
-                .SetProperty(world => world.UpdatedAt, now));
-        await db.Analyses.Where(analysis => analysis.Id == analysisId)
+        var changed = await db.Analyses.Where(analysis => analysis.Id == analysisId && analysis.Status == AnalysisStatus.InProgress)
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(analysis => analysis.Status, AnalysisStatus.Failed)
                 .SetProperty(analysis => analysis.FailureReason, reason)
                 .SetProperty(analysis => analysis.FinishedAt, now));
+        if (changed != 0)
+        {
+            await db.Worlds.Where(world => world.Id == worldId && world.Status == WorldStatus.Analyzing)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(world => world.Status, WorldStatus.Failed)
+                    .SetProperty(world => world.FailureReason, reason)
+                    .SetProperty(world => world.UpdatedAt, now));
+        }
         await transaction.CommitAsync();
     }
 
@@ -96,6 +101,20 @@ internal sealed class AnalysisWork(
         RaisedSuspension? raised;
         await using (var transaction = await db.Database.BeginTransactionAsync())
         {
+            // A learner-scoped transaction lock makes the block insert and rolling-window
+            // count one serial decision. Without it, simultaneous blocks can each count only
+            // their own uncommitted row and miss the suspension threshold.
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock(hashtextextended({world.LearnerId.ToString()}, 0))");
+
+            var analysis = await db.Analyses
+                .FromSqlInterpolated($"SELECT * FROM analyses WHERE id = {analysisId} FOR UPDATE")
+                .SingleAsync();
+            if (analysis.Status != AnalysisStatus.InProgress)
+            {
+                return;
+            }
+
             db.PhotoBlocks.Add(new PhotoBlock { LearnerId = world.LearnerId, Category = category, CreatedAt = now });
             await db.SaveChangesAsync();
 
@@ -145,45 +164,64 @@ internal sealed class AnalysisWork(
     }
 
     /// <summary>The words a learner gets, the world, and the analysis: all or nothing.</summary>
-    private async Task SaveAsync(Guid analysisId, Guid worldId, IReadOnlyList<CheckedItem> items)
+    private async Task SaveAsync(Guid analysisId, Guid worldId, IReadOnlyList<CheckedItem> items, IReadOnlyList<Arrow?> arrows)
     {
         await using var transaction = await db.Database.BeginTransactionAsync();
         var now = clock.GetUtcNow();
-        var analysis = await db.Analyses.SingleAsync(row => row.Id == analysisId);
+        // Serialize completion with the stale-analysis job. Its conditional update waits for
+        // this row lock; if it won first, no words may be saved for a timed-out analysis.
+        var analysis = await db.Analyses
+            .FromSqlInterpolated($"SELECT * FROM analyses WHERE id = {analysisId} FOR UPDATE")
+            .SingleAsync();
+        if (analysis.Status != AnalysisStatus.InProgress)
+        {
+            return;
+        }
         var world = await db.Worlds.SingleOrDefaultAsync(row => row.Id == worldId);
         if (world is not null)
         {
-            foreach (var item in items)
-            {
-                var word = await db.VocabularyWords.SingleOrDefaultAsync(row =>
-                    row.LearnerId == world.LearnerId && row.English == item.English && row.ThaiMeaningKey == item.ThaiMeaningKey);
-                if (word is null)
-                {
-                    word = new VocabularyWord
-                    {
-                        LearnerId = world.LearnerId,
-                        English = item.English,
-                        ThaiMeaning = item.ThaiMeaning,
-                        ThaiMeaningKey = item.ThaiMeaningKey,
-                    };
-                    db.VocabularyWords.Add(word);
-                    await db.SaveChangesAsync();
-                }
+            // Insert missing vocabulary in one statement. ON CONFLICT preserves the invariant
+            // when two analyses of one learner save the same word concurrently.
+            var ids = items.Select(_ => Guid.CreateVersion7()).ToArray();
+            var english = items.Select(item => item.English).ToArray();
+            var meanings = items.Select(item => item.ThaiMeaning).ToArray();
+            await db.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO vocabulary_words (id, learner_id, english, thai_meaning)
+                SELECT candidate.id, {world.LearnerId}, candidate.english, candidate.thai_meaning
+                FROM unnest({ids}, {english}, {meanings}) AS candidate(id, english, thai_meaning)
+                ON CONFLICT (learner_id, english) DO NOTHING
+                """);
 
-                db.WordOccurrences.Add(new WordOccurrence
+            var words = await db.VocabularyWords.AsNoTracking()
+                .Where(row => row.LearnerId == world.LearnerId && english.Contains(row.English))
+                .ToDictionaryAsync(row => row.English);
+
+            db.WordOccurrences.AddRange(items.Zip(arrows).Select((pair, index) =>
+            {
+                var (item, arrow) = pair;
+                var word = words[item.English];
+                return new WordOccurrence
                 {
                     WorldId = worldId,
                     VocabularyWordId = word.Id,
+                    ThaiMeaning = item.ThaiMeaning,
                     BoxX = item.Box.X,
                     BoxY = item.Box.Y,
                     BoxWidth = item.Box.Width,
                     BoxHeight = item.Box.Height,
+                    PointX = arrow?.Point.X,
+                    PointY = arrow?.Point.Y,
+                    TailX = arrow?.Tail.X,
+                    TailY = arrow?.Tail.Y,
+                    PointSource = arrow?.Source,
                     ExampleSentence = item.ExampleSentence,
                     CefrLevel = item.CefrLevel,
                     AcceptedVariants = [.. item.AcceptedVariants],
-                });
-                await db.SaveChangesAsync();
-            }
+                    // The detail endpoint orders words by CreatedAt. Preserve extraction order
+                    // even though this batch is inserted by one SaveChanges call.
+                    CreatedAt = now.AddMilliseconds(index),
+                };
+            }));
 
             world.Status = WorldStatus.Ready;
             world.FailureReason = null;

@@ -4,7 +4,10 @@ This kit refactors the CBeave/BidNest style of `CLAUDE.md + command/SKILL` into 
 
 ## Layout
 
-- `CLAUDE.md` — always-loaded project constitution; keep it concise.
+- `AGENTS.md` — the project constitution, shared by Claude Code and Codex; keep it concise (Codex reads at most 32 KiB).
+- `CLAUDE.md` — imports `AGENTS.md` (`@AGENTS.md`) and adds the few Claude-only notes.
+- `.agents/skills/`, `.codex/agents/` — Codex's copies of the skills and agents below, written by `pnpm ai:sync`; never edit them (`pnpm ai:check` fails when they drift).
+- `output/ai/` (git-ignored) — the handoff, lessons and context both assistants read when the user switches between them.
 - `.claude/rules/` — durable domain rules; path-scoped rules load only when relevant.
 - `.claude/skills/` — repeatable workflows loaded on demand.
 - `.claude/agents/` — specialist subagents for architecture, backend, frontend, database, AI, and final review.

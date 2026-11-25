@@ -164,6 +164,20 @@ public sealed class WorldsTests
         Assert.Equal("This photo is larger than 10 MB.", error.Message);
     }
 
+    // A PNG is decoded whole: a small file of a huge image is refused from its header, before it is decoded.
+    [Fact]
+    public async Task A_photo_of_more_than_120_million_pixels_is_refused()
+    {
+        using var client = new ApiClient();
+        await client.SignUpVerifiedAsync("world-pixels");
+
+        var response = await CreateAsync(client, "ใหญ่ไป", Png(11_000, 11_000));
+
+        var error = await response.ErrorAsync(HttpStatusCode.RequestEntityTooLarge);
+        Assert.Equal("PHOTO_TOO_LARGE", error.Code);
+        Assert.Equal("This photo has more than 120 million pixels.", error.Message);
+    }
+
     // V3: a world's name is 1 to 50 characters.
     [Theory]
     [InlineData("")]
@@ -378,5 +392,54 @@ public sealed class WorldsTests
         }
 
         throw new InvalidDataException("No start-of-frame marker.");
+    }
+
+    /// <summary>A black PNG of this size. It compresses to almost nothing, as an attack's would.</summary>
+    private static byte[] Png(int width, int height)
+    {
+        using var pixels = new MemoryStream();
+        using (var zlib = new System.IO.Compression.ZLibStream(pixels, System.IO.Compression.CompressionLevel.SmallestSize, leaveOpen: true))
+        {
+            // Each row: filter type 0, then three bytes a pixel.
+            var row = new byte[1 + (width * 3)];
+            for (var y = 0; y < height; y++)
+            {
+                zlib.Write(row);
+            }
+        }
+
+        using var png = new MemoryStream();
+        png.Write([137, 80, 78, 71, 13, 10, 26, 10]);
+        Chunk(png, "IHDR", [.. BigEndian(width), .. BigEndian(height), 8, 2, 0, 0, 0]);
+        Chunk(png, "IDAT", pixels.ToArray());
+        Chunk(png, "IEND", []);
+        return png.ToArray();
+    }
+
+    private static void Chunk(Stream png, string name, byte[] data)
+    {
+        byte[] type = System.Text.Encoding.ASCII.GetBytes(name);
+        png.Write(BigEndian(data.Length));
+        png.Write(type);
+        png.Write(data);
+        png.Write(BigEndian((int)Crc32([.. type, .. data])));
+    }
+
+    private static byte[] BigEndian(int value) => [(byte)(value >> 24), (byte)(value >> 16), (byte)(value >> 8), (byte)value];
+
+    /// <summary>The CRC-32 a PNG chunk carries (ISO 3309).</summary>
+    private static uint Crc32(byte[] bytes)
+    {
+        var crc = 0xFFFFFFFFu;
+        foreach (var value in bytes)
+        {
+            crc ^= value;
+            for (var bit = 0; bit < 8; bit++)
+            {
+                crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320u : crc >> 1;
+            }
+        }
+
+        return ~crc;
     }
 }

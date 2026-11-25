@@ -58,6 +58,11 @@ export type AdminActionBody = Json<
   paths['/v1/admin/learners/{learnerId}/actions']['post']['requestBody']
 >;
 export type AdminAction = AdminActionBody['action'];
+export type RequestBody = Json<paths['/v1/requests']['post']['requestBody']>;
+export type RequestKind = RequestBody['kind'];
+export type RequestReceived = Json<
+  paths['/v1/requests']['post']['responses'][201]
+>;
 
 /** The providers LanguZe can offer (FR-003); the API says which are configured. */
 export const PROVIDERS = ['google', 'line', 'facebook'] as const;
@@ -183,6 +188,20 @@ export const api = {
       body: JSON.stringify(body),
     }),
   declineTerms: () => call<void>('/v1/me/terms/decline', { method: 'POST' }),
+
+  /** A new display name (FR-109, US-094); answers the account with it. */
+  changeName: (name: string) =>
+    call<Account>('/v1/me', {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+
+  /** The request form (FR-112): one email to the operator, and an acknowledgement to the requester. */
+  submitRequest: (body: RequestBody) =>
+    call<RequestReceived>('/v1/requests', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 
   /**
    * Deletes the account and everything belonging to it (FR-007, US-009). The word

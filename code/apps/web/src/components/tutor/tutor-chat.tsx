@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { TUTOR_REPLY_EVENT } from '@/components/scene/tutor-scene';
 import { Button } from '@/components/ui/button';
 import { api, type TutorMessage, type Usage } from '@/lib/api/client';
 import { messageForCode, messageForError } from '@/lib/api/error-messages';
@@ -29,6 +30,9 @@ const EXAMPLES = [
  * that fails leaves the conversation exactly as it was and hands the message
  * back for another try (FR-071).
  *
+ * The conversation scrolls inside its own box, which fills the height it is given
+ * (the panel of Scene E3), so the box to type in stays at the bottom, in view.
+ *
  * This component owns the whole conversation, including clearing it. Keeping the
  * clear button outside would mean refreshing the page to empty a list this
  * component holds in state — and client state survives a refresh.
@@ -55,17 +59,60 @@ export function TutorChat({
   const [error, setError] = useState<string | null>(null);
   const [messagesLeft, setMessagesLeft] = useState(usage?.messagesLeft ?? null);
 
-  const foot = useRef<HTMLDivElement>(null);
+  const log = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
   useTypedBeforeHydration(box, setDraft);
 
   /*
    * Keep the newest in view: on arrival the last thing said is what a learner
-   * wants, and while a reply is being written it is what they are reading.
+   * wants, and while a reply is being written it is what they are reading. Only
+   * the conversation scrolls, never the page. Older messages loaded above leave
+   * the place alone, because the last message has not changed.
+   */
+  const newest = messages.at(-1)?.id;
+  useEffect(() => {
+    const scroller = log.current;
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+  }, [newest, reply, sending]);
+
+  /*
+   * The conversation changes height when Scene E3's band grows or shrinks on a
+   * phone (the room button, the keyboard). A learner reading the newest message
+   * keeps it in view; one who scrolled up to older ones keeps their place.
    */
   useEffect(() => {
-    foot.current?.scrollIntoView({ block: 'end' });
-  }, [messages.length, reply]);
+    const scroller = log.current;
+    if (!scroller || typeof ResizeObserver !== 'function') return;
+    let atBottom = true;
+    const onScroll = () => {
+      atBottom =
+        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 8;
+    };
+    const observer = new ResizeObserver(() => {
+      if (atBottom) scroller.scrollTop = scroller.scrollHeight;
+    });
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    observer.observe(scroller);
+    return () => {
+      scroller.removeEventListener('scroll', onScroll);
+      observer.disconnect();
+    };
+  }, []);
+
+  /*
+   * On a phone the box starts one line tall and grows with what is typed, up to
+   * 8rem: the conversation keeps the height (a three-line box left it 160px).
+   */
+  useLayoutEffect(() => {
+    const field = box.current;
+    if (!field || typeof window.matchMedia !== 'function') return;
+    if (!window.matchMedia('(max-width: 767px)').matches) {
+      field.style.height = '';
+      return;
+    }
+    field.style.height = '0px';
+    field.style.height = `${Math.min(field.scrollHeight + 2, 128)}px`;
+  }, [draft]);
 
   const outOfMessages = messagesLeft === 0;
 
@@ -82,6 +129,9 @@ export function TutorChat({
     try {
       for await (const event of sendTutorMessage(asked)) {
         if (event.event === 'delta') {
+          // The scene's orb swells as the answer starts to arrive.
+          if (streamed === '')
+            window.dispatchEvent(new Event(TUTOR_REPLY_EVENT));
           streamed += event.text;
           setReply(streamed);
           continue;
@@ -157,79 +207,91 @@ export function TutorChat({
   }
 
   return (
-    <div className="grid gap-4">
+    /*
+     * Marked while there is a conversation: on a phone Scene E3's band then gives
+     * the conversation most of its height (globals.css).
+     */
+    <div
+      className="flex min-h-0 flex-1 flex-col gap-3"
+      data-conversation={messages.length > 0 || sending ? '' : undefined}
+    >
       {messages.length > 0 ? (
         <ClearConversation onClear={clear} clearing={clearing} />
       ) : null}
 
-      {older ? (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={loadOlder}
-          disabled={loadingOlder}
-          className="justify-self-center"
-        >
-          {loadingOlder ? 'กำลังโหลด…' : 'ดูข้อความก่อนหน้า'}
-        </Button>
-      ) : null}
-
       <div
-        className="grid gap-3"
-        aria-live="polite"
-        aria-busy={sending}
-        aria-label="บทสนทนากับติวเตอร์"
+        ref={log}
+        className="-mr-2 grid min-h-0 flex-1 content-start gap-3 overflow-y-auto overscroll-contain pt-2 pr-2 [mask-image:linear-gradient(to_bottom,transparent,black_0.5rem)]"
       >
-        {messages.length === 0 && !sending ? (
-          <section className="glass-panel grid gap-3 rounded-3xl p-6">
-            <h2 className="font-bold">ถามติวเตอร์ได้เลย</h2>
-            <p className="text-sm text-muted-foreground">
-              ติวเตอร์เห็นคำศัพท์และข้อที่คุณตอบผิดของคุณเอง
-              จึงอธิบายให้ตรงกับที่คุณกำลังเรียนได้ ตอบเป็นภาษาไทย
-            </p>
-            <ul className="grid gap-2">
-              {EXAMPLES.map((example) => (
-                <li key={example}>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={outOfMessages}
-                    onClick={() => {
-                      setDraft(example);
-                      box.current?.focus();
-                    }}
-                    className="h-auto w-full justify-start whitespace-normal py-2 text-left"
-                  >
-                    {example}
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          </section>
+        {older ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={loadOlder}
+            disabled={loadingOlder}
+            className="justify-self-center"
+          >
+            {loadingOlder ? 'กำลังโหลด…' : 'ดูข้อความก่อนหน้า'}
+          </Button>
         ) : null}
 
-        {messages.map((message) => (
-          <Bubble key={message.id} role={message.role}>
-            {message.content}
-          </Bubble>
-        ))}
+        <div
+          className="grid gap-3"
+          aria-live="polite"
+          aria-busy={sending}
+          aria-label="บทสนทนากับติวเตอร์"
+        >
+          {messages.length === 0 && !sending ? (
+            <section className="glass-panel grid gap-3 rounded-3xl p-6">
+              <h2 className="font-bold">ถามติวเตอร์ได้เลย</h2>
+              <p className="text-sm text-muted-foreground">
+                ติวเตอร์เห็นคำศัพท์และข้อที่คุณตอบผิดของคุณเอง
+                จึงอธิบายให้ตรงกับที่คุณกำลังเรียนได้ ตอบเป็นภาษาไทย
+              </p>
+              <ul className="grid gap-2">
+                {EXAMPLES.map((example) => (
+                  <li key={example}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={outOfMessages}
+                      onClick={() => {
+                        setDraft(example);
+                        box.current?.focus();
+                      }}
+                      className="h-auto w-full justify-start whitespace-normal py-2 text-left"
+                    >
+                      {example}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
 
-        {/* The reply as it is written; it becomes a saved message once whole. */}
-        {sending ? (
-          <Bubble role="TUTOR">
-            {reply === '' ? (
-              <span className="text-muted-foreground">กำลังคิด…</span>
-            ) : (
-              reply
-            )}
-          </Bubble>
-        ) : null}
+          {messages.map((message) => (
+            <Bubble key={message.id} role={message.role}>
+              {message.content}
+            </Bubble>
+          ))}
+
+          {/* The reply as it is written; it becomes a saved message once whole. */}
+          {sending ? (
+            <Bubble role="TUTOR">
+              {reply === '' ? (
+                <span className="text-muted-foreground">กำลังคิด…</span>
+              ) : (
+                reply
+              )}
+            </Bubble>
+          ) : null}
+        </div>
       </div>
 
       {error ? (
         <p
           role="alert"
-          className="rounded-2xl bg-destructive/10 px-4 py-3 text-sm text-destructive"
+          className="shrink-0 rounded-2xl bg-destructive/10 px-4 py-3 text-sm text-destructive"
         >
           {error}
         </p>
@@ -237,7 +299,7 @@ export function TutorChat({
 
       {/* FR-071: with none left the box is closed, and says when it opens again. */}
       {outOfMessages && usage ? (
-        <p className="glass-panel rounded-2xl p-4 text-sm text-muted-foreground">
+        <p className="glass-panel shrink-0 rounded-2xl p-4 text-sm text-muted-foreground">
           วันนี้คุณคุยกับติวเตอร์ครบ {usage.messagesLimit} ข้อความแล้ว
           เริ่มนับใหม่ {resetsAtText(usage.resetsAt)} น. ตามเวลาไทย
         </p>
@@ -247,7 +309,7 @@ export function TutorChat({
             submit.preventDefault();
             void send(draft);
           }}
-          className="grid gap-2"
+          className="grid shrink-0 gap-2"
         >
           <label htmlFor="tutor-message" className="sr-only">
             ข้อความถึงติวเตอร์
@@ -271,7 +333,7 @@ export function TutorChat({
             rows={3}
             disabled={sending}
             placeholder="พิมพ์คำถามเกี่ยวกับภาษาอังกฤษ"
-            className="w-full resize-y rounded-2xl border border-border bg-background px-4 py-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60 dark:border-input dark:bg-input/30"
+            className="w-full resize-y rounded-2xl max-md:h-[3.125rem] max-md:resize-none border border-border bg-background px-4 py-3 text-base outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60 dark:border-input dark:bg-input/30"
           />
           {/* The box stops at the limit, and a longer paste is cut: this says why. */}
           {draft.length > NEAR_LIMIT ? (
@@ -300,13 +362,6 @@ export function TutorChat({
           </div>
         </form>
       )}
-
-      {/*
-       * Below the box, not above it. Scrolling to a mark that sits under the last
-       * message would push the box itself off the bottom of the screen, so a
-       * learner with a long conversation would have to scroll back to type.
-       */}
-      <div ref={foot} />
     </div>
   );
 }
@@ -338,7 +393,8 @@ function ClearConversation({
         variant="ghost"
         size="sm"
         onClick={() => setAsking(true)}
-        className="justify-self-end text-muted-foreground"
+        // On a phone it sits beside the title (top of the panel), not on a row of its own.
+        className="shrink-0 self-end text-muted-foreground max-md:absolute max-md:top-[66px] max-md:right-2"
       >
         ล้างบทสนทนา
       </Button>
@@ -346,7 +402,7 @@ function ClearConversation({
   }
 
   return (
-    <section className="glass-panel grid gap-3 rounded-2xl p-4">
+    <section className="glass-panel grid shrink-0 gap-3 rounded-2xl p-4">
       <p className="text-sm">
         ล้างบทสนทนาทั้งหมดและกู้คืนไม่ได้ จำนวนข้อความที่ใช้ไปวันนี้จะไม่คืนให้
       </p>

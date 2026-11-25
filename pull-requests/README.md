@@ -14,9 +14,9 @@ The NestJS API and the Next.js web app, from the first AI adapter to running in 
 | [#74 Choose the AI models with the evaluation](pull-request-74.md)        | Choosing the models from measured results, 98.8% correct words, rather than by assumption                                                                                                                            |
 | [#87 Let the database sleep while nothing needs it](pull-request-87.md)   | A production problem: a scheduled task kept the serverless database awake, which would have used up its free hours in the middle of every month                                                                      |
 
-## Porting to ASP.NET Core
+## Porting to ASP.NET Core (completed 2026-11-06)
 
-The API ported slice by slice, with the NestJS API as the reference and black-box contract tests as the judge ([ADR-0006](../code/docs/architecture/adr/0006-aspnet-core-api.md)).
+The API port completed and cut over to ASP.NET Core in production on 2026-11-06. These pull requests are historical examples of the slice-by-slice port, with the NestJS API as the reference and black-box contract tests as the judge ([ADR-0006](../code/docs/architecture/adr/0006-aspnet-core-api.md)).
 
 | Pull request                                                                                  | Why read it                                                                                                                               |
 | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |

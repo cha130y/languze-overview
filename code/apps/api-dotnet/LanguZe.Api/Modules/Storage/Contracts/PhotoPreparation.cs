@@ -25,6 +25,14 @@ public sealed class PhotoPreparation
     /// <summary>The longest side of the copy the world list shows (FR-013).</summary>
     public const int ThumbnailSide = 320;
 
+    /// <summary>
+    /// The most pixels an upload may have, read from its header before anything is decoded. A PNG
+    /// is decoded whole, however small the file: one of 30,000 by 30,000 pixels fits in 2.5 MB and
+    /// took 4.5 seconds of the server's time to prepare. 120 million pixels admits a 108-megapixel
+    /// phone photo and takes under a second.
+    /// </summary>
+    public const long MaxPixels = 120_000_000;
+
     /// <summary>Everything stored is JPEG, so one format is served, sent to AI, and measured.</summary>
     public const string PhotoContentType = "image/jpeg";
 
@@ -33,24 +41,29 @@ public sealed class PhotoPreparation
 
     public PreparedPhoto Prepare(byte[] upload)
     {
-        var loader = Describe(upload);
+        var (loader, width, height) = Describe(upload);
         if (!AcceptedLoaders.Contains(loader, StringComparer.Ordinal))
         {
             throw new AppException(ErrorCodes.PhotoTypeNotAllowed, StatusCodes.Status415UnsupportedMediaType, "Only JPEG, PNG, and WebP photos can be used.");
         }
 
+        if ((long)width * height > MaxPixels)
+        {
+            throw new AppException(ErrorCodes.PhotoTooLarge, StatusCodes.Status413PayloadTooLarge, "This photo has more than 120 million pixels.");
+        }
+
         return new PreparedPhoto(Render(upload, MaxPhotoSide, 82), Render(upload, ThumbnailSide, 70));
     }
 
-    /// <summary>The loader libvips reads the file with, from its header alone, as sharp's <c>metadata()</c> reads it.</summary>
-    private static string Describe(byte[] upload)
+    /// <summary>The loader libvips reads the file with, and its size, from its header alone, as sharp's <c>metadata()</c> reads them.</summary>
+    private static (string Loader, int Width, int Height) Describe(byte[] upload)
     {
         try
         {
             if (Image.FindLoadBuffer(upload) is not null)
             {
                 using var header = Image.NewFromBuffer(upload, access: Enums.Access.Sequential, failOn: Enums.FailOn.Error);
-                return (string)header.Get("vips-loader");
+                return ((string)header.Get("vips-loader"), header.Width, header.Height);
             }
         }
         catch (VipsException)

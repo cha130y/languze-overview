@@ -85,7 +85,7 @@ internal sealed class ApiHost : IAsyncDisposable
     /// <summary>A database built as <c>pnpm db:dotnet</c> builds one, and the API on it, with any <paramref name="settings"/> a test needs.</summary>
     public static async Task<ApiHost> StartAsync(IReadOnlyDictionary<string, string>? settings = null)
     {
-        var database = await TemporaryDatabase.WithPrismaSchemaAsync();
+        var database = await TemporaryDatabase.AtBaselineAsync();
         await using (var db = database.Context())
         {
             await db.Database.MigrateAsync(TestContext.Current.CancellationToken);

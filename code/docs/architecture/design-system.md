@@ -13,6 +13,8 @@ The visual language of the LanguZe web app: a dark, glass-surfaced interface bui
 | Fonts                         | `apps/web/src/app/layout.tsx`                                           |
 | Components                    | `apps/web/src/components/ui/` (shadcn), `apps/web/src/components/auth/` |
 
+The illustrated scenes that sit behind the pages, and the hub, are in [scene design](scene-design.md).
+
 Change the tokens, not the components. A screen that needs a colour the tokens do not have needs a new token, discussed here first.
 
 ## 2. Dark only
@@ -25,20 +27,21 @@ This is a deliberate limit, not an oversight. The translucent surfaces in sectio
 
 Every colour below is written in `oklch` in the stylesheet. The hex column is the same colour, for eyedropper work.
 
-| Token                  | Hex       | Contrast on background | Use                                                                   |
-| ---------------------- | --------- | ---------------------- | --------------------------------------------------------------------- |
-| `--background`         | `#090A10` | —                      | The canvas. Never used on text.                                       |
-| `--foreground`         | `#e3e1e9` | 15.3:1                 | Body and heading text.                                                |
-| `--card`               | `#0d121f` | —                      | Solid surface, where glass is not wanted.                             |
-| `--primary`            | `#4cd7f6` | 11.6:1                 | The brand cyan: actions, focus rings, active state.                   |
-| `--primary-foreground` | `#040814` | —                      | Text on top of primary.                                               |
-| `--success`            | `#4edea3` | 11.6:1                 | Mastery, correct answers, progress that went well.                    |
-| `--highlight`          | `#d0bcff` | 11.6:1                 | Secondary accent: AI surfaces and the wordmark gradient.              |
-| `--streak`             | `#f97316` | 7.1:1                  | Streaks and daily goals only. Loud on purpose, so rare.               |
-| `--destructive`        | `#fb7185` | 7.3:1                  | Errors, refusals, destructive actions.                                |
-| `--muted-foreground`   | `#9ba6b2` | 8.0:1                  | Supporting text, hints, placeholders.                                 |
-| `--border`             | white 12% | —                      | Decorative edges: cards, dividers.                                    |
-| `--input`              | white 28% | —                      | Form field edges. Stronger than `--border` on purpose; see section 8. |
+| Token                  | Hex       | Contrast on background | Use                                                                                                       |
+| ---------------------- | --------- | ---------------------- | --------------------------------------------------------------------------------------------------------- |
+| `--background`         | `#090A10` | —                      | The canvas. Never used on text.                                                                           |
+| `--foreground`         | `#e3e1e9` | 15.3:1                 | Body and heading text.                                                                                    |
+| `--card`               | `#0d121f` | —                      | Solid surface, where glass is not wanted.                                                                 |
+| `--primary`            | `#4cd7f6` | 11.6:1                 | The brand cyan: actions, focus rings, active state.                                                       |
+| `--primary-foreground` | `#040814` | —                      | Text on top of primary.                                                                                   |
+| `--success`            | `#4edea3` | 11.6:1                 | Mastery, correct answers, progress that went well.                                                        |
+| `--highlight`          | `#d0bcff` | 11.6:1                 | Secondary accent: AI surfaces and the wordmark gradient.                                                  |
+| `--streak`             | `#f97316` | 7.1:1                  | Streaks and daily goals only. Loud on purpose, so rare.                                                   |
+| `--destructive`        | `#fb7185` | 7.3:1                  | Errors, refusals, destructive actions.                                                                    |
+| `--pointer`            | `#e5232b` | —                      | The Identify question's arrow and number only, on photos, always edged in white (white text on it 4.6:1). |
+| `--muted-foreground`   | `#9ba6b2` | 8.0:1                  | Supporting text, hints, placeholders.                                                                     |
+| `--border`             | white 12% | —                      | Decorative edges: cards, dividers.                                                                        |
+| `--input`              | white 28% | —                      | Form field edges. Stronger than `--border` on purpose; see section 8.                                     |
 
 Cyan carries the interface. Mint, lavender and orange are accents with one job each — a screen using all of them at once is a screen doing too much.
 
@@ -89,6 +92,8 @@ Rules for new screens:
 - **Single centred column** for focused tasks — signing in, one game question. Constrain with `max-w-sm` to `max-w-md` and centre it; the whitespace either side on a desktop is correct, not a gap to fill.
 - **Content that scales** — photo grids, word lists, progress — spreads with a responsive column count rather than stretching one column to the full width of a monitor.
 - **Interactive targets are at least 44px tall on a phone.** `Button` has the `xl` size (`h-11`) for this, and form fields are `h-11`. Smaller sizes are for dense desktop-only surfaces such as an admin table.
+- **The way back at the top of a page is `BackLink`** (`components/layout/back-link.tsx`): a 44px pill with an arrow and the place it leads to ("หน้าแรก", "โลกของฉัน", "ออกจากเกม"), the same on every page (WCAG 3.2.3).
+- **The Identify question's arrow is `QuestionArrow`** (`components/game/question-arrow.tsx`, #73): a red shaft and head edged in white, from the spot the server chose to the object, with the question's number in a disc on its tail. The disc is 20–30px across, a share of the photo's width, and the arrow is 56–100px long on any screen, in the direction the server chose: sized to the photo, a desktop's arrows were twice a phone's and a phone's disc too big. Its tip stops just short of the object, and at the edge of a small object's box, so it never hides what it points at; the box is then drawn thin and dashed. Without an arrow the box is drawn as before.
 - **No horizontal scrolling at 320px.**
 
 Navigation is deliberately not part of this document yet: the screens it would connect do not exist. When it arrives it will differ by width — a bottom bar is a phone pattern and does not belong on a desktop browser.

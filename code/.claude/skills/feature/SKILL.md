@@ -7,7 +7,7 @@ argument-hint: <requirement-id-or-feature>
 # Feature Delivery Workflow
 
 1. Read the relevant requirement, acceptance criteria, ADRs, process flow, and existing implementation before editing.
-2. Inspect `git status --short`, repository structure, relevant tests, and Prisma schema when data is involved.
+2. Inspect `git status --short`, repository structure, relevant tests, and the EF Core entities and migrations when data is involved.
 3. State affected domains, likely files, data/API/UI impact, verification plan, and documentation impact.
 4. For cross-domain changes, consult the architect agent before implementation.
 5. Implement a coherent vertical slice: contract -> backend -> persistence -> frontend -> tests.

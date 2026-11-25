@@ -7,6 +7,10 @@ import TutorPage from './page';
 
 vi.mock('@/lib/api/server', () => ({
   getAccount: vi.fn(),
+  requireLearner: (account: { termsAccepted: boolean } | null) => {
+    if (!account) throw new Error('redirected to /sign-in');
+    if (!account.termsAccepted) throw new Error('redirected to /terms');
+  },
   getTutorConversation: vi.fn(),
   getUsage: vi.fn(),
 }));

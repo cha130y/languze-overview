@@ -1,6 +1,6 @@
 // Compares two OpenAPI documents by what a client can observe: operations, parameters,
-// request bodies, response codes, and schemas. Used while the API is ported to ASP.NET
-// Core (ADR-0006, section 9): the NestJS document is the base, the .NET one the candidate.
+// request bodies, response codes, and schemas. The contract tests compare
+// tests/api-contract/openapi.json, the base, with the document the API serves, the candidate.
 //
 // Ignored on purpose: descriptions, examples, titles, formats, operation IDs, tags, and
 // schema names, which differ between generators without changing what a client sees.
