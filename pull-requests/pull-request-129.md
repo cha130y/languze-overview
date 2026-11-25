@@ -44,5 +44,3 @@ Ports the first half of the analysis slice to ASP.NET Core (ADR-0006): what happ
 ## Before merging
 
 Apply `AdoptPhotoBlocks` to staging's database (production deployment, section 17). It changes nothing, but the migration history must hold it.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)

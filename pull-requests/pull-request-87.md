@@ -43,5 +43,3 @@ The first request after a quiet spell waits while Neon resumes the compute. Neon
 - [x] e2e against the local database: 305 passed
 - [x] Typecheck, lint, `nest build`, `pnpm format:check`
 - [ ] After deploy: Neon's monitoring graph shows the endpoint suspended during quiet hours, and daily compute falls well below 6 CU-hours
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
