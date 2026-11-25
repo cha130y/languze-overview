@@ -10,7 +10,7 @@
 // or README link check fails. Nothing is committed: review the diff.
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, extname, join, resolve } from 'node:path';
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const manifest = JSON.parse(readFileSync('tools/manifest.json', 'utf8'));
 const source = resolve(manifest.source);
@@ -69,8 +69,32 @@ for (const file of copied) {
   }
 }
 
-// Every local link in the README and the curated Markdown files must reach a file
-// readers can open. Checking only README.md let links to omitted source docs survive.
+// Source docs can link to private files intentionally omitted from this selection.
+// Keep their labels as plain text in the curated copy; never leave readers with 404s.
+const omittedLinks = [];
+const withinStage = (target) => {
+  const path = relative(stage, target);
+  return path === '' || (path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+};
+for (const file of copied.filter((item) => extname(item).toLowerCase() === '.md')) {
+  const path = join(stage, file);
+  const original = readFileSync(path, 'utf8');
+  const curated = original.replace(
+    /(?<image>!)?\[(?<label>[^\]]*)\]\((?<target>[^)#\s]+)(?:#[^)]*)?\)/g,
+    (whole, image, label, rawTarget) => {
+      const target = decodeURIComponent(rawTarget);
+      if (/^[a-z]+:/i.test(target) || target.startsWith('//') || image) return whole;
+      const resolvedTarget = resolve(dirname(path), target);
+      if (withinStage(resolvedTarget) && existsSync(resolvedTarget)) return whole;
+      omittedLinks.push(`${file}: ${target}`);
+      return label;
+    },
+  );
+  if (curated !== original) writeFileSync(path, curated);
+}
+
+// Every local link in the README and curated Markdown files must reach a file
+// readers can open after omitted source-doc links have been made plain text.
 const markdown = [
   {
     name: 'README.md',
@@ -117,6 +141,9 @@ if (findings.length > 0 || broken.length > 0) {
     throw error;
   }
   if (hadCode) rmSync(backup, { recursive: true, force: true });
+  if (omittedLinks.length > 0) {
+    console.log(`Kept ${omittedLinks.length} references to omitted source files as plain text.`);
+  }
   console.log('No secrets found, and every local Markdown link works. Review the diff, then commit.');
 }
 } finally {

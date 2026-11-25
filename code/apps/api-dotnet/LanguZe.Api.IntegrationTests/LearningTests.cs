@@ -147,6 +147,93 @@ public sealed class LearningTests
         Assert.Equal(questions.Count, await after.Attempts.CountAsync(TestContext.Current.CancellationToken));
     }
 
+    // FR-041: separate sessions can answer different occurrences of one shared vocabulary
+    // word at once. Each answer must apply its mastery transition to the preceding result.
+    [Fact]
+    public async Task Concurrent_answers_to_the_same_word_from_different_worlds_keep_both_mastery_transitions()
+    {
+        await using var api = await ApiHost.StartAsync();
+        var (browser, learner) = await Learners.VerifiedLearnerAsync(api, "shared-word-race@example.com");
+        var firstWorldId = await Learners.AnalysedWorldAsync(api, browser);
+        Guid wordId;
+        Guid occurrenceId;
+        string english;
+        Guid secondWorldId;
+        await using (var db = api.Database.Context())
+        {
+            var original = await db.WordOccurrences
+                .Include(row => row.VocabularyWord)
+                .Where(row => row.WorldId == firstWorldId)
+                .FirstAsync(TestContext.Current.CancellationToken);
+            wordId = original.VocabularyWordId;
+            occurrenceId = Guid.CreateVersion7();
+            english = original.VocabularyWord.English;
+            secondWorldId = Guid.CreateVersion7();
+            var now = api.Clock.GetUtcNow();
+            db.Worlds.Add(new World
+            {
+                Id = secondWorldId,
+                LearnerId = learner,
+                Name = "Shared word world",
+                Status = WorldStatus.Ready,
+                CreatedAt = now,
+                UpdatedAt = now,
+                Occurrences =
+                [
+                    new WordOccurrence
+                    {
+                        Id = occurrenceId,
+                        VocabularyWordId = wordId,
+                        ThaiMeaning = original.ThaiMeaning,
+                        BoxX = original.BoxX,
+                        BoxY = original.BoxY,
+                        BoxWidth = original.BoxWidth,
+                        BoxHeight = original.BoxHeight,
+                        ExampleSentence = original.ExampleSentence,
+                        CefrLevel = original.CefrLevel,
+                        AcceptedVariants = original.AcceptedVariants,
+                        CreatedAt = now,
+                    },
+                ],
+            });
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var firstSession = await JsonOfAsync(await StartAsync(browser, firstWorldId));
+        var secondSession = await JsonOfAsync(await StartAsync(browser, secondWorldId));
+        var firstSessionId = Guid.Parse(IdOf(firstSession));
+        var secondSessionId = Guid.Parse(IdOf(secondSession));
+        Dictionary<Guid, Guid> questionsBySession;
+        await using (var db = api.Database.Context())
+        {
+            questionsBySession = await db.SessionQuestions
+                .Where(question => question.VocabularyWordId == wordId && (question.SessionId == firstSessionId || question.SessionId == secondSessionId))
+                .ToDictionaryAsync(question => question.SessionId, question => question.Id, TestContext.Current.CancellationToken);
+            Assert.Equal(2, questionsBySession.Count);
+        }
+
+        var replies = await Task.WhenAll(new[]
+        {
+            browser.PostAsJsonAsync($"/v1/sessions/{firstSessionId}/questions/{questionsBySession[firstSessionId]}/answer", new { answer = english }, TestContext.Current.CancellationToken),
+            browser.PostAsJsonAsync($"/v1/sessions/{secondSessionId}/questions/{questionsBySession[secondSessionId]}/answer", new { answer = english }, TestContext.Current.CancellationToken),
+        });
+        Assert.All(replies, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
+        foreach (var reply in replies)
+        {
+            reply.Dispose();
+        }
+
+        await using var after = api.Database.Context();
+        var attempts = await after.Attempts.Where(attempt => attempt.VocabularyWordId == wordId)
+            .OrderBy(attempt => attempt.AnsweredAt)
+            .ToListAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(2, attempts.Count);
+        Assert.Contains(attempts, attempt => attempt.LevelBefore is null && attempt.LevelAfter == MasteryLevel.Learning);
+        Assert.Contains(attempts, attempt => attempt.LevelBefore == MasteryLevel.Learning && attempt.LevelAfter == MasteryLevel.Familiar);
+        var mastery = await after.WordMastery.SingleAsync(row => row.VocabularyWordId == wordId, TestContext.Current.CancellationToken);
+        Assert.Equal((MasteryLevel.Familiar, (short)0), (mastery.Level, mastery.Streak));
+    }
+
     // FR-042, SRS 4.1: an attempt keeps what was typed and where the word went; mastery follows it.
     [Fact]
     public async Task Each_answer_is_kept_with_the_level_it_left_the_word_at()

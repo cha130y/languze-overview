@@ -28,7 +28,7 @@ internal sealed class AnswerQuestionHandler(LanguZeDbContext db, SessionReader r
             ? await db.WordOccurrences.AsNoTracking().FirstOrDefaultAsync(row => row.Id == occurrenceId, cancellationToken)
             : null;
         var word = question.VocabularyWordId is { } wordId
-            ? await db.VocabularyWords.Include(row => row.Mastery).FirstOrDefaultAsync(row => row.Id == wordId, cancellationToken)
+            ? await db.VocabularyWords.FirstOrDefaultAsync(row => row.Id == wordId, cancellationToken)
             : null;
 
         // The word was removed, or its world deleted, since the session started (UC-031 2b).
@@ -59,17 +59,13 @@ internal sealed class AnswerQuestionHandler(LanguZeDbContext db, SessionReader r
         // Giving up keeps no answer text, which the database also insists on.
         var answerText = dontKnow ? null : request.Answer ?? string.Empty;
         var correct = !dontKnow && AnswerCheck.IsCorrectAnswer(answerText!, word.English, occurrence.AcceptedVariants ?? []);
-        var before = word.Mastery is { } mastery
-            ? new Mastery(Levels.StageOf(mastery.Level)!.Value, mastery.Streak, mastery.FamiliarOn)
-            : null;
         var now = DateTimeOffset.FromUnixTimeMilliseconds(clock.GetUtcNow().ToUnixTimeMilliseconds());
-        var after = MasteryRules.Next(before, correct, DateOnly.FromDateTime(BangkokDay.StartOf(now).ToOffset(BangkokDay.Offset).DateTime));
         var xpAwarded = AnswerCheck.XpFor(correct);
 
-        bool completed;
+        AnswerRecord record;
         try
         {
-            completed = await RecordAsync(learnerId, sessionId, questionId, word.Id, occurrence.Id, answerText, dontKnow, correct, xpAwarded, before, after, now, cancellationToken);
+            record = await RecordAsync(learnerId, sessionId, questionId, word.Id, occurrence.Id, answerText, dontKnow, correct, xpAwarded, now, cancellationToken);
         }
         catch (DbUpdateException error) when (error.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
         {
@@ -80,6 +76,11 @@ internal sealed class AnswerQuestionHandler(LanguZeDbContext db, SessionReader r
             return await RecordedAsync(first, feedback, sessionId, cancellationToken);
         }
 
+        if (record.Recorded is { } concurrentAnswer)
+        {
+            return await RecordedAsync(concurrentAnswer, feedback, sessionId, cancellationToken);
+        }
+
         return new AnswerResultResponse(
             correct,
             dontKnow,
@@ -88,13 +89,13 @@ internal sealed class AnswerQuestionHandler(LanguZeDbContext db, SessionReader r
             MatchedVariant: correct && !AnswerCheck.IsTheWord(answerText ?? string.Empty, word.English),
             feedback,
             xpAwarded,
-            new MasteryChangeResponse(before is null ? null : Levels.NameOf(before.Level), Levels.NameOf(after.Level)),
-            completed,
-            completed ? await reader.SummaryOfAsync(sessionId, cancellationToken) : null);
+            new MasteryChangeResponse(record.Before is null ? null : Levels.NameOf(record.Before.Level), Levels.NameOf(record.After!.Level)),
+            record.Completed,
+            record.Completed ? await reader.SummaryOfAsync(sessionId, cancellationToken) : null);
     }
 
     /// <summary>Writes the attempt, the word's mastery and the XP; answers whether the session is over.</summary>
-    private async Task<bool> RecordAsync(
+    private async Task<AnswerRecord> RecordAsync(
         Guid learnerId,
         Guid sessionId,
         Guid questionId,
@@ -104,12 +105,30 @@ internal sealed class AnswerQuestionHandler(LanguZeDbContext db, SessionReader r
         bool dontKnow,
         bool correct,
         int xpAwarded,
-        Mastery? before,
-        Mastery after,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        // Every answer for this vocabulary word takes the same lock, even before mastery exists.
+        // The word is shared by occurrences in different worlds, so it is the stable lock row.
+        _ = await db.Database.SqlQuery<Guid>($"""
+            SELECT id AS "Value" FROM vocabulary_words WHERE id = {wordId} FOR UPDATE
+            """).SingleAsync(cancellationToken);
+        var alreadyAnswered = await db.Attempts.AsNoTracking()
+            .SingleOrDefaultAsync(attempt => attempt.QuestionId == questionId, cancellationToken);
+        if (alreadyAnswered is not null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new AnswerRecord(alreadyAnswered);
+        }
+
+        var current = await db.WordMastery.AsNoTracking()
+            .SingleOrDefaultAsync(row => row.VocabularyWordId == wordId, cancellationToken);
+        var before = current is null
+            ? null
+            : new Mastery(Levels.StageOf(current.Level)!.Value, current.Streak, current.FamiliarOn);
+        var after = MasteryRules.Next(before, correct, DateOnly.FromDateTime(BangkokDay.StartOf(now).ToOffset(BangkokDay.Offset).DateTime));
+
         db.Attempts.Add(new Attempt
         {
             LearnerId = learnerId,
@@ -127,8 +146,8 @@ internal sealed class AnswerQuestionHandler(LanguZeDbContext db, SessionReader r
         });
         await db.SaveChangesAsync(cancellationToken);
 
-        // One mastery per word, shared by every world that contains it (FR-040), written as
-        // Prisma's upsert writes it: one statement, so two answers to the word cannot collide.
+        // One mastery per word, shared by every world that contains it (FR-040). The word-row
+        // lock above serializes transitions before this upsert writes the resulting state.
         var level = Levels.LevelOf(after.Level);
         var streak = (short)after.Streak;
         await db.Database.ExecuteSqlAsync(
@@ -165,7 +184,7 @@ internal sealed class AnswerQuestionHandler(LanguZeDbContext db, SessionReader r
         }
 
         await transaction.CommitAsync(cancellationToken);
-        return left == 0;
+        return new AnswerRecord(before, after, left == 0);
     }
 
     /// <summary>The result of an answer already recorded, with the answer that counted and no XP a second time (FR-034).</summary>
@@ -186,4 +205,9 @@ internal sealed class AnswerQuestionHandler(LanguZeDbContext db, SessionReader r
             completed,
             completed ? await reader.SummaryOfAsync(sessionId, cancellationToken) : null);
     }
+}
+
+internal sealed record AnswerRecord(Mastery? Before, Mastery? After, bool Completed, Attempt? Recorded = null)
+{
+    public AnswerRecord(Attempt recorded) : this(null, null, false, recorded) { }
 }
