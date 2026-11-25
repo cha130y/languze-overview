@@ -86,12 +86,6 @@ The [PRD](code/docs/requirements/PRD.md), the [SRS](code/docs/requirements/SRS.m
 - The code selection is synced from LanguZe main at commit b9faa01 (2026-11-25). Pull-request notes remain historical examples. The curated selection does not build on its own; use the private review copy for the full source. Deployment and operations documents are left out on purpose.
 - [`tools/sync.mjs`](tools/sync.mjs) copies the files in [`tools/manifest.json`](tools/manifest.json) from the private repository, and only files git tracks there.
 
-## Interview review
-
-- Put this public overview on your CV so reviewers can see the product, stack and selected engineering work.
-- If a reviewer wants the full source, share the private review copy and remove their access when the interview process ends.
-- Use a screen share to walk through the original repository pull requests, CI runs and production environment.
-
 ## Licence
 
 Shared for review; all rights reserved. No licence is granted to use, copy, modify or distribute this code.
