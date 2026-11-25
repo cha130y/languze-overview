@@ -37,7 +37,6 @@ This 34-second cut from the current introduction video is shown at twice the spe
 
 The GIF and detailed gameplay screens were cut from the introduction video captured on 2026-11-25. The current home screenshot was captured from the live app on the same date. The interface is in Thai, as the learners are (NFR-013).
 
-
 ## Where to look
 
 A few files show most of the work. Paths are under [`code/`](code/), which keeps the original repository's layout.
@@ -51,7 +50,7 @@ A few files show most of the work. Paths are under [`code/`](code/), which keeps
 - [Progress page](code/apps/web/src/app/progress/) and [review page](code/apps/web/src/app/review/): how mistakes lead into continued practice.
 - [`tutor-stream.ts`](code/apps/web/src/lib/api/tutor-stream.ts): the tutor's streamed reply, read as it arrives
 - [Playwright smoke tests](code/apps/web/e2e/) of worlds, the game and the tutor, run in CI against the API with the fake AI provider
-- [Accessibility review](code/docs/testing/accessibility-review.md) (WCAG 2.2 AA) and [performance review](code/docs/testing/performance-review.md): non-AI requests at p95 25 ms under a k6 load test
+- [Accessibility review](code/docs/testing/accessibility-review.md) (WCAG 2.2 AA) and [performance review](code/docs/testing/performance-review.md): non-AI requests at p95 37 ms through the ASP.NET Core API under k6 load
 
 **AI engineering**
 
@@ -63,10 +62,10 @@ A few files show most of the work. Paths are under [`code/`](code/), which keeps
 
 **AI-assisted development (AI SDLC)**
 
-The work used Claude Code inside a harness that makes AI changes checkable:
+The work used AI-assisted development inside a harness that makes changes checkable:
 
 - The [rules](code/.claude/rules/) and [agents](code/.claude/agents/) define what the AI must and must not do, such as reproducing NestJS's behaviour during the port rather than improving it
-- [feature delivery workflow](code/.claude/skills/feature/SKILL.md) and [AI feature workflow](code/.claude/skills/ai-feature/SKILL.md) define repeatable steps for feature changes and AI evaluation.
+- [feature delivery workflow](code/.claude/skills/feature/SKILL.md) and [AI feature workflow](code/.claude/skills/ai-feature/SKILL.md) define repeatable steps for feature changes and AI evaluation
 - [`settings.json`](code/.claude/settings.json) and its [hooks](code/.claude/scripts/): environment files the AI cannot read, and formatting run after every edit
 - The [pull requests](pull-requests/README.md), five from building Release 1.0 and three from the port: each has its own verification, and those from the port also say what the checks caught, including mistakes the AI made and the test that found them
 
