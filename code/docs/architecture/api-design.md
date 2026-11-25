@@ -3,7 +3,7 @@
 - **Document status:** Draft v0.1 — questions raised while writing, and their decisions, are in [Appendix A](#appendix-a-questions-raised-while-writing-the-api-design)
 - **Date:** 2026-09-19
 - **Release covered:** Release 1.0
-- **Source:** [SRS](../requirements/SRS.md) v0.10, [use cases](../requirements/use-cases.md), [process flows](../flows/README.md), [data model](data-model.md), [ADR-0003](adr/0003-aspnet-core-identity.md), [ADR-0004](adr/0004-ai-provider.md)
+- **Source:** [SRS](../requirements/SRS.md) v0.10, use cases, [process flows](../flows/README.md), [data model](data-model.md), [ADR-0003](adr/0003-aspnet-core-identity.md), [ADR-0004](adr/0004-ai-provider.md)
 - **Next:** implementation, starting with the schema, the first migration, and the `auth` module
 - **Updated:** 2026-11-06, for the ASP.NET Core API, which answers every endpoint here as the NestJS API did ([ADR-0006](adr/0006-aspnet-core-api.md)). Git keeps the earlier wording
 

@@ -3,7 +3,7 @@
 - **Document status:** Draft v0.1 — questions raised while writing, and their decisions, are in [Appendix A](#appendix-a-questions-raised-while-writing-the-flows)
 - **Date:** 2026-09-19
 - **Release covered:** Release 1.0
-- **Source:** [Use cases](../requirements/use-cases.md) v0.3 and [SRS](../requirements/SRS.md) v0.8
+- **Source:** Use cases v0.3 and [SRS](../requirements/SRS.md) v0.8
 - **Next documents:** architecture overview → ERD and data dictionary → ADRs → API design
 
 ## Purpose
@@ -16,7 +16,7 @@ Flows describe behavior, not endpoints or table names. Routes, request formats, 
 
 | Flow                                          | Covers                                                                            | Use cases                     |
 | --------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------- |
-| [Authentication](authentication.md)           | Sign-up, verification, provider sign-in and linking, request authorization, reset | UC-001–UC-005                 |
+| Authentication           | Sign-up, verification, provider sign-in and linking, request authorization, reset | UC-001–UC-005                 |
 | [Image to vocabulary](image-to-vocabulary.md) | World creation, photo preparation, background analysis, status updates, deletion  | UC-010, UC-011, UC-020–UC-022 |
 | [Game session](game-session.md)               | Starting or continuing a session, answering, mastery, review                      | UC-030, UC-031, UC-050        |
 | [AI tutor](ai-tutor.md)                       | Messages, tool calls, streaming, the daily limit                                  | UC-070                        |
@@ -39,7 +39,7 @@ Four use cases need no flow of their own: UC-060 and UC-104 only read data, UC-0
 
 ## Rules for every flow
 
-- **Who is asking:** the API takes the learner from the session on every request, never from request input, and authorizes every request (FR-008). See [Authentication, section 3](authentication.md#3-authorizing-every-request).
+- **Who is asking:** the API takes the learner from the session on every request, never from request input, and authorizes every request (FR-008). See Authentication, section 3.
 - **Transactions:** changes that must stay consistent are saved in one database transaction, for example an attempt with its mastery update and XP, or an admin action with its audit entry.
 - **Side effects after commit:** emails and photo deletions happen only after the transaction that establishes the facts has committed. If a side effect fails, the facts stay; the failure is logged, and photo deletions are retried until they succeed.
 - **No AI calls inside transactions:** AI provider calls are slow and can fail, so they never run while a database transaction is open.

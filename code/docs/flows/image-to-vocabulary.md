@@ -73,7 +73,7 @@ sequenceDiagram
 - A blocked photo is deleted from storage right after the transaction commits (step 4 after step 3). If deletion fails, the cleanup record keeps it on the retry list.
 - The safety check and the extraction are two separate AI calls, safety first ([ADR-0004](../architecture/adr/0004-ai-provider.md)).
 - If the world was deleted while the analysis ran, the result is discarded at the save step.
-- **5-minute rule (V16):** when the API starts, and every minute afterwards, it marks analyses that have been `IN_PROGRESS` for more than 5 minutes as `FAILED` (released) and their worlds as `FAILED`. A result or error arriving after that transition cannot change the analysis or world again. This catches analyses lost when the API restarts **(P2)**. The minute check reads the database only from the start of an analysis until a minute past its 5-minute mark, and for 6 minutes after the API starts; otherwise there is nothing to release, and reading anyway would keep Neon's compute from suspending ([production deployment, section 10](../deployment/production.md#10-cost)).
+- **5-minute rule (V16):** when the API starts, and every minute afterwards, it marks analyses that have been `IN_PROGRESS` for more than 5 minutes as `FAILED` (released) and their worlds as `FAILED`. A result or error arriving after that transition cannot change the analysis or world again. This catches analyses lost when the API restarts **(P2)**. The minute check reads the database only from the start of an analysis until a minute past its 5-minute mark, and for 6 minutes after the API starts; otherwise there is nothing to release, and reading anyway would keep Neon's compute from suspending (production deployment, section 10).
 
 ## 3. Validation and post-processing
 

@@ -2,7 +2,7 @@
 
 - **Status:** Done in code (2026-10-07); large text and reflow checked (2026-10-08), and reflow fixed on the create-world page (A7, 2026-10-26); the keyboard and the in-app browsers checked (2026-10-26); VoiceOver passed once A6 was fixed (2026-10-26); TalkBack accepted without an Android device (section 4)
 - **Requirement:** [NFR-012](../requirements/SRS.md): the core journeys meet WCAG 2.2 level AA, being keyboard operable, with visible focus, sufficient contrast and labelled inputs, and with a highlight box that does not rely on colour alone
-- **Used by:** [launch checklist, section 5](../deployment/launch-checklist.md#5-reviews)
+- **Used by:** launch checklist, section 5
 
 ## Scope and method
 
@@ -106,7 +106,7 @@ Two bugs that are not about accessibility were found along the way and fixed in 
 
 Device emulators that load the page inside a frame block its cookies, so signing in with Google, LINE or Facebook fails there with `state_mismatch` or a provider error. That is the tool, not LanguZe: check sign-in in a normal tab, in the browser's own device mode, or on the phone.
 
-Owner: you, during your own run-through ([launch checklist, section 4](../deployment/launch-checklist.md#4-production-configuration-and-checks)). How to run each check, and where to record the result: [accessibility checks on real devices](accessibility-checks.md).
+Owner: you, during your own run-through (launch checklist, section 4). How to run each check, and where to record the result: accessibility checks on real devices.
 
 1. **Screen readers.** VoiceOver on an iPhone (Safari) and TalkBack on Android (Chrome), through sign-up, creating a world, a game, a review and the tutor. Each step can be done, and English words are read in English. VoiceOver was run on 2026-10-26: everything passed but the game feedback (A6), and once that was fixed, it passed too. TalkBack was not run, as no Android device was at hand, which was accepted for Release 1.0 on 2026-10-26: both screen readers work from the same names, roles, languages and announcements, which axe-core checks in code, so VoiceOver finds most of what TalkBack would. Run TalkBack when an Android device is at hand, or when a tester uses one
 2. ~~**Large text and a narrow screen.** Text at 200%, and a width of 320 CSS pixels: nothing cut off or overlapping, and no sideways scrolling (1.4.4, 1.4.10)~~ Passed on 2026-10-08, in a desktop browser and at 320 × 568 in device emulation. On a real iPhone the create-world page still ran past the edge (A7), fixed and checked on 2026-10-26

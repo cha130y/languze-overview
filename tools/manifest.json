@@ -1,7 +1,6 @@
 {
   "source": "../LanguZe",
   "include": [
-    "CLAUDE.md",
     ".claude/README.md",
     ".claude/settings.json",
     ".claude/agents/",

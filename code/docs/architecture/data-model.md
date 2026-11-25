@@ -113,7 +113,7 @@ The tables of ASP.NET Core Identity, mapped onto the schema LanguZe already had:
 
 Verified for AI features (SRS 1.3) is not stored: it is `email_verified`, or at least one `user_logins` row for Google, LINE, or Facebook (V13, V14).
 
-**`sessions`:** signed-in sessions (section 3 of the [authentication flow](../flows/authentication.md#3-authorizing-every-request)). The cookie carries only the row's ID, protected by Data Protection; the ticket stays here, so deleting the row ends the session at once.
+**`sessions`:** signed-in sessions (section 3 of the authentication flow). The cookie carries only the row's ID, protected by Data Protection; the ticket stays here, so deleting the row ends the session at once.
 
 | Column       | Type        | Null | Notes                                                                                         |
 | ------------ | ----------- | ---- | --------------------------------------------------------------------------------------------- |

@@ -1,7 +1,7 @@
 # ADR-0007: Traffic data and closed-account records
 
 - **Status:** Accepted (2026-11-07). Both are built: the closed-account records first, then the event log.
-- **Requirements:** FR-007, FR-110, FR-111; [legal review](../../deployment/legal-review.md), findings C1–C3; [launch checklist](../../deployment/launch-checklist.md), section 7
+- **Requirements:** FR-007, FR-110, FR-111; legal review, findings C1–C3; launch checklist, section 7
 
 ## Context
 

@@ -43,7 +43,7 @@ This document specifies what LanguZe Release 1.0 must do: functional requirement
 ### 1.4 References
 
 - [PRD](PRD.md)
-- [User stories](user-stories.md)
+- User stories
 - [ADR-0001: Modular monolith](../architecture/adr/0001-modular-monolith.md)
 - [ADR-0002: Toolchain baseline](../architecture/adr/0002-toolchain-baseline.md)
 - [ADR-0003: ASP.NET Core Identity inside the API](../architecture/adr/0003-aspnet-core-identity.md)
@@ -199,7 +199,7 @@ Configuration and monitoring are done through deployment tooling. Moderation is 
 | FR-112 | The system shall offer one request form, linked from every page, for a personal-data request (PDPA sections 30–36), a report of content that may break the law or the Terms of Use, and an appeal against an AI suspension (FR-105). Anyone may send it. It shall ask for a name, an email address, what is asked, for a report the reporter's address, where the content is and its harm, and a statement that it is true, which with the typed name stands for the reporter's signature, and attach the account when signed in. Each request goes by email to `privacy@languze.com` or `support@languze.com` with a reference the requester is also sent; nothing is stored.                                                                                                                                                                                                                                                    |
 | FR-113 | The system shall publish a notice-and-take-down policy, linked from every page, as the MDES notification of 2565 asks (clause 6): what may be reported, how, the contact details, that reported content is suspended within 24 hours of a complaint, and that data is removed on an official order within the period the notification sets.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
-**Pre-launch check, settled on 2026-11-08:** FR-092 deletes blocked photos immediately. Thai law sets no duty to keep or report suspected illegal material (FR-098) that an automated check blocks and no one views, so FR-092 keeps no exception ([legal review, section 6](../deployment/legal-review.md#6-questions-for-a-thai-lawyer), question 5). A lawyer confirms it in the final review after the opening.
+**Pre-launch check, settled on 2026-11-08:** FR-092 deletes blocked photos immediately. Thai law sets no duty to keep or report suspected illegal material (FR-098) that an automated check blocks and no one views, so FR-092 keeps no exception (legal review, section 6, question 5). A lawyer confirms it in the final review after the opening.
 
 ### 3.11 Administration (PRD F9)
 

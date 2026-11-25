@@ -2,7 +2,7 @@
 
 - **Status:** NFR-002 met (2026-10-08). NFR-003 met in production (2026-10-23, section 2). NFR-001 to be measured in production once learners have made worlds (section 3)
 - **Requirements:** [NFR-001, NFR-002, NFR-003](../requirements/SRS.md), with the expected load V22
-- **Used by:** [launch checklist, section 5](../deployment/launch-checklist.md#5-reviews)
+- **Used by:** launch checklist, section 5
 
 ## Summary
 
@@ -14,7 +14,7 @@
 
 ## 1. NFR-002: the load test
 
-**What it does.** [`tests/load/learners.js`](../../tests/load/learners.js) runs in [k6](https://grafana.com/docs/k6/latest/); it lived in `apps/api/load` with the NestJS API until 2026-11-06. Each virtual user is one learner, signed in once with the password, who then plays rounds:
+**What it does.** `tests/load/learners.js` runs in [k6](https://grafana.com/docs/k6/latest/); it lived in `apps/api/load` with the NestJS API until 2026-11-06. Each virtual user is one learner, signed in once with the password, who then plays rounds:
 
 1. their account and their worlds
 2. one world, and starting a game in it

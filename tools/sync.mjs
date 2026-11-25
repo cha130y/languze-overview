@@ -69,20 +69,40 @@ for (const file of copied) {
   }
 }
 
-// Every local link in README.md must reach a file in this repository.
-const readme = readFileSync('README.md', 'utf8');
-const broken = [...readme.matchAll(/\]\(([^)#\s]+)(?:#[^)]*)?\)/g)]
-  .map((match) => match[1])
-  .filter((link) => {
-    if (/^[a-z]+:/i.test(link)) return false;
-    const target = link.startsWith('code/') ? join(stage, link.slice('code/'.length)) : link;
-    return !existsSync(target);
-  });
+// Every local link in the README and the curated Markdown files must reach a file
+// readers can open. Checking only README.md let links to omitted source docs survive.
+const markdown = [
+  {
+    name: 'README.md',
+    text: readFileSync('README.md', 'utf8'),
+    directory: process.cwd(),
+    isRootReadme: true,
+  },
+  ...copied
+    .filter((file) => extname(file).toLowerCase() === '.md')
+    .map((file) => ({
+      name: `code/${file}`,
+      text: readFileSync(join(stage, file), 'utf8'),
+      directory: join(stage, dirname(file)),
+      isRootReadme: false,
+    })),
+];
+const broken = [];
+for (const document of markdown) {
+  for (const match of document.text.matchAll(/!?\[[^\]]*\]\(([^)#\s]+)(?:#[^)]*)?\)/g)) {
+    const link = decodeURIComponent(match[1]);
+    if (/^[a-z]+:/i.test(link) || link.startsWith('//')) continue;
+    const target = document.isRootReadme && link.startsWith('code/')
+      ? join(stage, link.slice('code/'.length))
+      : resolve(document.directory, link);
+    if (!existsSync(target)) broken.push(`${document.name}: ${link}`);
+  }
+}
 
 console.log(`Copied ${copied.length} files from LanguZe at ${commit} into code/`);
 if (findings.length > 0 || broken.length > 0) {
   for (const finding of findings) console.error(`Looks like a secret: ${finding}`);
-  for (const link of broken) console.error(`Broken link in README.md: ${link}`);
+  for (const link of broken) console.error(`Broken local Markdown link: ${link}`);
   console.error('The existing code/ snapshot was not changed.');
   process.exitCode = 1;
 } else {
@@ -97,7 +117,7 @@ if (findings.length > 0 || broken.length > 0) {
     throw error;
   }
   if (hadCode) rmSync(backup, { recursive: true, force: true });
-  console.log('No secrets found, and every link in README.md works. Review the diff, then commit.');
+  console.log('No secrets found, and every local Markdown link works. Review the diff, then commit.');
 }
 } finally {
   if (existsSync(stage)) rmSync(stage, { recursive: true, force: true });

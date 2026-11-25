@@ -3,7 +3,7 @@
 - **Document status:** Draft v0.1
 - **Date:** 2026-09-20
 - **Release covered:** Release 1.0
-- **Source:** [user stories, Definition of Done](../requirements/user-stories.md#2-definition-of-done), [SRS 5.1 evaluation cases](../requirements/SRS.md#51-evaluation-cases-minimum), [ADR-0002](../architecture/adr/0002-toolchain-baseline.md), [build plan](../planning/build-plan.md)
+- **Source:** user stories, Definition of Done, [SRS 5.1 evaluation cases](../requirements/SRS.md#51-evaluation-cases-minimum), [ADR-0002](../architecture/adr/0002-toolchain-baseline.md), build plan
 
 ## 1. Principles
 
@@ -24,7 +24,7 @@
 | Production image   | Docker + Node fetch                              | `scripts/web-image-check.mjs`                                                                                                              | The web app as Railway runs it: public/ files, static chunks, an optimized picture, the origin-secret 403 and 503                                                                                                             | `pnpm web:image-check`, CI job `image`                                                   |
 | AI evaluation      | A separate command (increment 13)                | `apps/api-dotnet/LanguZe.Tools/Evaluation/`; photo and tutor cases in `apps/api-dotnet/evaluation/` ([AI evaluation](../ai/evaluation.md)) | The cases of SRS 5.1 against the real AI provider: safety check, extraction, tutor grounding and scope, prompt injection                                                                                                      | Manually before launch and before any model change; never in pull-request CI             |
 | Load               | k6, outside pnpm (installed or its Docker image) | `tests/load/learners.js`; learners seeded by `LanguZe.Tools load-seed` ([performance review](performance-review.md))                       | NFR-002: 25 learners playing at once (V22), every non-AI endpoint p95 ≤ 500 ms                                                                                                                                                | Manually before a release that changes queries or endpoints; never in pull-request CI    |
-| Manual             | Real browsers and phones                         | Checklists in the build plan increments; [usability test](usability-test.md); [launch checklist](../deployment/launch-checklist.md)        | Sign-in in Safari and the LINE and Facebook in-app browsers, photo capture on phones, usability testing with learners                                                                                                         | Increments 3 and 14                                                                      |
+| Manual             | Real browsers and phones                         | Checklists in the build plan increments; usability test; launch checklist        | Sign-in in Safari and the LINE and Facebook in-app browsers, photo capture on phones, usability testing with learners                                                                                                         | Increments 3 and 14                                                                      |
 
 ## 3. Conventions
 

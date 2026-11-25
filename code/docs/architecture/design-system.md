@@ -13,7 +13,7 @@ The visual language of the LanguZe web app: a dark, glass-surfaced interface bui
 | Fonts                         | `apps/web/src/app/layout.tsx`                                           |
 | Components                    | `apps/web/src/components/ui/` (shadcn), `apps/web/src/components/auth/` |
 
-The illustrated scenes that sit behind the pages, and the hub, are in [scene design](scene-design.md).
+The illustrated scenes that sit behind the pages, and the hub, are in scene design.
 
 Change the tokens, not the components. A screen that needs a colour the tokens do not have needs a new token, discussed here first.
 

@@ -4,7 +4,7 @@
 
 LanguZe (pronounced lang-u-zay) is an AI-powered, gamified English-learning web app for Thai adults. Learners turn photos of their world into English vocabulary, play games with those words, review mistakes and ask an AI tutor questions grounded in their own progress.
 
-The app is public at [languze.com](https://languze.com). The source repository remains private; this public overview gives a guided tour of the product, architecture and selected code. A read-only copy of the full repository is available to interviewers on request.
+The app is public at [languze.com](https://languze.com). The source repository remains private; this public overview gives a guided tour of the product, architecture and selected code.
 
 ## Status
 
@@ -44,9 +44,9 @@ A few files show most of the work. Paths are under [`code/`](code/), which keeps
 
 **AI-assisted development (AI SDLC)**
 
-The code was written with Claude Code, inside a harness that makes the AI's work checkable rather than trusted:
+The work used Claude Code inside a harness that makes AI changes checkable:
 
-- [`CLAUDE.md`](code/CLAUDE.md), the [rules](code/.claude/rules/) and the [agents](code/.claude/agents/): what the AI must and must not do, such as reproducing NestJS's behaviour during the port rather than improving it
+- The [rules](code/.claude/rules/) and [agents](code/.claude/agents/) define what the AI must and must not do, such as reproducing NestJS's behaviour during the port rather than improving it
 - [feature delivery workflow](code/.claude/skills/feature/SKILL.md) and [AI feature workflow](code/.claude/skills/ai-feature/SKILL.md) define repeatable steps for feature changes and AI evaluation.
 - [`settings.json`](code/.claude/settings.json) and its [hooks](code/.claude/scripts/): environment files the AI cannot read, and formatting run after every edit
 - The [pull requests](pull-requests/README.md), five from building Release 1.0 and three from the port: each has its own verification, and those from the port also say what the checks caught, including mistakes the AI made and the test that found them
@@ -61,7 +61,7 @@ The code was written with Claude Code, inside a harness that makes the AI's work
 
 **Requirements and design**
 
-The [PRD](code/docs/requirements/PRD.md), the [SRS](code/docs/requirements/SRS.md) with numbered requirements that the code and tests cite, the [architecture overview](code/docs/architecture/overview.md), the [data model](code/docs/architecture/data-model.md), the [API design](code/docs/architecture/api-design.md), the [process flows](code/docs/flows/README.md) and [six ADRs](code/docs/architecture/adr/).
+The [PRD](code/docs/requirements/PRD.md), the [SRS](code/docs/requirements/SRS.md) with numbered requirements that the code and tests cite, the [architecture overview](code/docs/architecture/overview.md), the [data model](code/docs/architecture/data-model.md), the [API design](code/docs/architecture/api-design.md), the [process flows](code/docs/flows/README.md) and [seven ADRs](code/docs/architecture/adr/).
 
 ## Engineering practices
 

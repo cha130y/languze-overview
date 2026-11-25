@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-09-19, as Better Auth inside the NestJS API; rewritten on 2026-11-06 for ASP.NET Core Identity, which replaced it at the cutover ([ADR-0006, section 5](0006-aspnet-core-api.md#5-authentication)). Git keeps the Better Auth version.
-- **Related:** SRS 3.1 (FR-001–FR-009), FR-090, FR-105, NFR-005, NFR-018, NFR-019; [architecture overview](../overview.md) (P1, A1, A2); [data model](../data-model.md) (D1, D3, D5); [authentication flow](../../flows/authentication.md)
+- **Related:** SRS 3.1 (FR-001–FR-009), FR-090, FR-105, NFR-005, NFR-018, NFR-019; [architecture overview](../overview.md) (P1, A1, A2); [data model](../data-model.md) (D1, D3, D5); authentication flow
 
 ## Context
 
@@ -50,14 +50,14 @@ LanguZe's own endpoints under `/v1/auth` do the work of sign-up, sign-in, verifi
 
 - One authentication system, inside the application that owns the data, with no per-user cost and learner data kept in LanguZe's own database.
 - Because the web app and the API share one domain (A1), the session cookie is first-party and works in Safari and in the LINE and Facebook in-app browsers.
-- **Sharing the cookie across the subdomains is configuration, not a default.** The cookie's domain comes from `COOKIE_DOMAIN` — `.languze.com` in production, empty locally where both applications already share `localhost`. Without it the cookie belongs to the API's host alone, the web app's server never receives it, and every page renders signed out after a reload (H5, [production deployment](../../deployment/production.md)).
+- **Sharing the cookie across the subdomains is configuration, not a default.** The cookie's domain comes from `COOKIE_DOMAIN` — `.languze.com` in production, empty locally where both applications already share `localhost`. Without it the cookie belongs to the API's host alone, the web app's server never receives it, and every page renders signed out after a reload (H5, production deployment).
 - **The callback address must not come from the request.** A handler builds it from the request by default, and behind Cloudflare and Railway's edge the request arrives over http: on the day of the cutover Google refused the first sign-in with `redirect_uri_mismatch`. Integration tests now set `AUTH_URL` apart from the request's address.
 - **Linking to an unverified account has to remove its password.** Someone can sign up with another person's email and a password of their own; they cannot verify it, but the account exists. When the real owner later signs in with a provider, the two are joined and the email is marked verified — so the password and every session it opened are removed in the same transaction, and whoever chose it loses access to what is now the owner's account.
 - **Only the provider routes are open under `/auth`**, and they carry their own rate limit per address, since they run before the session guard. Starting a sign-in stores the one-time state, which is work worth limiting.
 - **A LINE or Facebook sign-in never joins an existing account.** Neither provider says whether an address is verified, and FR-009 links only on a verified one. Every LINE and Facebook account is therefore stored with a placeholder address (D1), and a learner who uses both Google and LINE has two accounts, as US-005 criterion 3 describes. If LINE's email permission is ever approved, this does not change: the permission shares an address, it does not vouch for it.
 - **Sign-up refuses a placeholder address.** The addresses are built from the provider's user ID, so they are guessable; without this, someone could register the address a LINE identity resolves to and hold the account that learner's first sign-in would create.
 - **Nothing is ever emailed to a placeholder address.** The rule sits in `MailSender` rather than at each call site, so a new kind of email cannot forget it.
-- **Losing or changing `DATA_PROTECTION_KEY` signs every learner out once and changes nothing else.** The API makes a new key and logs the old keys it can no longer read, by fingerprint ([production deployment, section 17](../../deployment/production.md#17-staging-for-the-aspnet-core-port)).
+- **Losing or changing `DATA_PROTECTION_KEY` signs every learner out once and changes nothing else.** The API makes a new key and logs the old keys it can no longer read, by fingerprint (production deployment, section 17).
 - LanguZe's own rules (placeholder emails, safe linking, the Terms step, suspension) are written in the auth module, each with a contract test or, where only a provider's answer can reach it, an integration test against a fake provider (`tests/api-contract/COVERAGE.md`).
 - The provider packages are pinned exactly like every other package (ADR-0002); `AspNet.Security.OAuth.Line` comes from the community, so its releases are read before an upgrade.
 - LINE Login needs a LINE Developers channel for Thailand, and sharing the email address needs LINE's approval of the email permission. Until it is approved, LINE sign-ins have no email, which FR-009 already handles.
