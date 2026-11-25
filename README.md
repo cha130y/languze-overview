@@ -83,7 +83,7 @@ The [PRD](code/docs/requirements/PRD.md), the [SRS](code/docs/requirements/SRS.m
 
 ## About this selection
 
-- The code selection is synced from LanguZe main at commit b9faa01 (2026-11-25). Pull-request notes remain historical examples. The curated selection does not build on its own; use the private review copy for the full source. Deployment and operations documents are left out on purpose.
+- The code selection is synced from LanguZe main at commit b9faa01 (2026-11-25). Pull-request notes remain historical examples. The curated selection does not build on its own.
 - [`tools/sync.mjs`](tools/sync.mjs) copies the files in [`tools/manifest.json`](tools/manifest.json) from the private repository, and only files git tracks there.
 
 ## Licence
