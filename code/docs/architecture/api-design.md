@@ -3,20 +3,21 @@
 - **Document status:** Draft v0.1 — questions raised while writing, and their decisions, are in [Appendix A](#appendix-a-questions-raised-while-writing-the-api-design)
 - **Date:** 2026-09-19
 - **Release covered:** Release 1.0
-- **Source:** [SRS](../requirements/SRS.md) v0.10, [use cases](../requirements/use-cases.md), [process flows](../flows/README.md), [data model](data-model.md), [ADR-0003](adr/0003-better-auth-in-api.md), [ADR-0004](adr/0004-ai-provider.md)
-- **Next:** implementation, starting with the Prisma schema, the first migration, and the `auth` module
+- **Source:** [SRS](../requirements/SRS.md) v0.10, use cases, [process flows](../flows/README.md), [data model](data-model.md), [ADR-0003](adr/0003-aspnet-core-identity.md), [ADR-0004](adr/0004-ai-provider.md)
+- **Next:** implementation, starting with the schema, the first migration, and the `auth` module
+- **Updated:** 2026-11-06, for the ASP.NET Core API, which answers every endpoint here as the NestJS API did ([ADR-0006](adr/0006-aspnet-core-api.md)). Git keeps the earlier wording
 
 ## 1. Purpose
 
-This document defines the HTTP API between the web app and the API for Release 1.0: conventions, every LanguZe endpoint, error codes, and limits. The OpenAPI document generated from the NestJS controllers (served at `/docs` outside production) becomes the exact contract once the endpoints exist; this document is the plan it is built from and is kept in step with it.
+This document defines the HTTP API between the web app and the API for Release 1.0: conventions, every LanguZe endpoint, error codes, and limits. The exact contract is `tests/api-contract/openapi.json`: the contract tests compare the document the API serves (`/openapi/v1.json`, in Development) with it, and the web app's types are generated from it (section 6). This document is the plan it was built from and is kept in step with it.
 
 ## 2. Conventions
 
 ### 2.1 Paths and versions
 
 - LanguZe endpoints live under `/v1` (E1). Changes within `v1` are additive only: new endpoints, new optional request fields, new response fields. A breaking change would need `/v2`.
-- Better Auth's own endpoints live under `/auth`, and only the two that provider sign-in needs are served (section 3.1, ADR-0003); every other path there answers `NOT_FOUND`.
-- `GET /health` (already implemented) and `/docs` (OpenAPI, not in production) stay at the root.
+- The two routes provider sign-in needs live under `/auth` (section 3.1, ADR-0003); every other path there answers `NOT_FOUND`.
+- `GET /health` stays at the root, and so does `/openapi/v1.json`, served in Development only.
 - Resource names are plural nouns; IDs in paths are UUIDs. A request for another learner's resource returns `404`, never `403`, so it reveals nothing about what exists (FR-008).
 
 ### 2.2 Requests and responses
@@ -24,13 +25,13 @@ This document defines the HTTP API between the web app and the API for Release 1
 - JSON with `camelCase` field names, except the photo upload (`multipart/form-data`) and the tutor stream (`text/event-stream`).
 - Times are ISO 8601 strings in UTC, such as `2026-09-19T07:30:00Z`. Values that are calendar days in `Asia/Bangkok` (V1) are `YYYY-MM-DD` strings.
 - Enum values are the upper-case names from the [data model](data-model.md#6-enums), such as `READY` or `FAMILIAR`.
-- Request bodies are validated at the boundary with class-validator DTOs; unknown fields are rejected (already configured). Limits come from the SRS, including V19.
+- Request bodies are validated at the boundary, before binding, by rules named after the class-validator decorators the NestJS API used, so the answers stayed the same (`Platform/Validation`); unknown fields are rejected. Limits come from the SRS, including V19.
 - Lists that can grow without bound (tutor messages, the audit log) use cursor pagination: `?limit=` (default 20, at most 50) and `?cursor=`, with `nextCursor` in the response, `null` on the last page. Lists with a small fixed maximum (at most 20 worlds, 10 questions) are returned whole.
 - Photos are returned as short-lived signed links, never as permanent addresses (P4).
 
 ### 2.3 Sessions and cross-site protection
 
-- The session is Better Auth's cookie, sent by the browser automatically: `HttpOnly`, `Secure`, `SameSite=Lax`, shared across LanguZe subdomains in production (A1, ADR-0003).
+- The session is a cookie, `__Secure-languze.session`, sent by the browser automatically: `HttpOnly`, `Secure`, `SameSite=Lax`, shared across LanguZe subdomains in production (A1, ADR-0003).
 - CORS allows only the web app's origin, with credentials. The current CORS setup must add `credentials: true`.
 - Every request that changes data must carry an allowed `Origin` header. With `SameSite=Lax` cookies, this blocks cross-site request forgery even for form-style requests such as the photo upload.
 - Every endpoint requires a signed-in account unless marked **public**. Status, role, verification, and AI suspension are read from the database on each request (NFR-019).
@@ -58,10 +59,10 @@ Every error has the same shape (E2):
 | ------ | -------------------------------------------------------------------------------------------------- |
 | `400`  | The request is malformed or breaks a validation rule.                                              |
 | `401`  | No valid session.                                                                                  |
-| `403`  | Signed in, but not allowed: account suspended, not an admin, not verified, AI suspended, under 18. |
+| `403`  | Signed in, but not allowed: account suspended, not an admin, not verified, AI suspended, under 20. |
 | `404`  | The resource does not exist or belongs to someone else.                                            |
 | `409`  | The resource is in the wrong state for the request, such as retrying a world that is `READY`.      |
-| `413`  | The photo is larger than 10 MB.                                                                    |
+| `413`  | The photo is larger than 10 MB, or has more than 120 million pixels.                               |
 | `415`  | The photo is not JPEG, PNG, or WebP.                                                               |
 | `429`  | A rate limit or a daily limit is reached; `Retry-After` and `details.resetsAt` say when to retry.  |
 | `500`  | Unexpected error. The response carries the request ID so the error can be found in the logs.       |
@@ -71,7 +72,7 @@ Every error has the same shape (E2):
 
 ### 3.1 Authentication (`/v1/auth`)
 
-Better Auth runs inside the API (ADR-0003), but learners reach it through LanguZe endpoints, so every answer uses the error format of section 2.4 and the rate limits of section 5.
+Authentication runs inside the API with ASP.NET Core Identity (ADR-0003), and learners reach it through LanguZe endpoints, so every answer uses the error format of section 2.4 and the rate limits of section 5.
 
 | Method | Path                               | Purpose                                                                                                                             | Requirements                |
 | ------ | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
@@ -92,7 +93,7 @@ Better Auth runs inside the API (ADR-0003), but learners reach it through LanguZ
 - Verification and reset links point at the web app, which sends the token to the API. A used or expired token is answered with `INVALID_TOKEN` (`400`).
 - `DELETE /v1/me` answers `204` and signs the browser out. The confirmation word is the API's own guard, so one stray request can never delete an account; the learner confirms on screen as well (FR-007, US-009). Anything else in `confirmation` is `VALIDATION_FAILED` (`400`) and deletes nothing. Everything belonging to the account goes with it through the schema's cascades; stored photos are removed within 24 hours by the storage module (NFR-009, V10).
 
-Provider sign-in is the exception: the provider sends the browser straight back to the API, so these two routes are Better Auth's own and answer in its format. Nothing else of Better Auth's is served — its own sign-up, for example, would skip the age check and the Terms.
+Provider sign-in is the exception: the provider sends the browser straight back to the API, so these two routes answer in the format Better Auth's did, which the web app reads: starting a sign-in answers JSON with the provider's address, and a callback ends in a redirect, with Better Auth's words for what went wrong in `?error=`. The callback paths are the ones registered with each provider, and the callback address is built from `AUTH_URL`.
 
 | Method | Path                        | Purpose                                                                                                                                      | Requirements           |
 | ------ | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
@@ -101,13 +102,14 @@ Provider sign-in is the exception: the provider sends the browser straight back 
 
 ### 3.2 Account (`auth` module)
 
-| Method   | Path                   | Purpose                                                                                    | Requirements           |
-| -------- | ---------------------- | ------------------------------------------------------------------------------------------ | ---------------------- |
-| `GET`    | `/v1/me`               | The signed-in account and what it may do                                                   | FR-006, FR-096, FR-108 |
-| `POST`   | `/v1/me/terms`         | Complete a pending provider sign-up: accept the Terms, confirm display name, year of birth | FR-090, V20            |
-| `POST`   | `/v1/me/terms/decline` | Decline: removes the pending sign-up and signs out                                         | FR-090                 |
-| `GET`    | `/v1/me/usage`         | Analyses left today and when they reset; tutor messages follow in their own increment      | FR-080                 |
-| `DELETE` | `/v1/me`               | Delete the account; body `{ "confirmation": "DELETE" }`                                    | FR-007                 |
+| Method   | Path                   | Purpose                                                                                              | Requirements           |
+| -------- | ---------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------- |
+| `GET`    | `/v1/me`               | The signed-in account and what it may do                                                             | FR-006, FR-096, FR-108 |
+| `PATCH`  | `/v1/me`               | Change the display name: `{ "name": "..." }`, 1–50 characters as at sign-up; answers as `GET /v1/me` | FR-109                 |
+| `POST`   | `/v1/me/terms`         | Complete a pending provider sign-up: accept the Terms, confirm display name, year of birth           | FR-090, V20            |
+| `POST`   | `/v1/me/terms/decline` | Decline: removes the pending sign-up and signs out                                                   | FR-090                 |
+| `GET`    | `/v1/me/usage`         | Analyses left today and when they reset; tutor messages follow in their own increment                | FR-080                 |
+| `DELETE` | `/v1/me`               | Delete the account; body `{ "confirmation": "DELETE" }`                                              | FR-007                 |
 
 `GET /v1/me` returns:
 
@@ -178,7 +180,11 @@ A session's next question never includes the answer (FR-032):
     "id": "…",
     "position": 5,
     "photoUrl": "https://…signed…",
-    "box": { "x": 0.12, "y": 0.4, "width": 0.25, "height": 0.2 }
+    "box": { "x": 0.12, "y": 0.4, "width": 0.25, "height": 0.2 },
+    "arrow": {
+      "point": { "x": 0.2, "y": 0.55 },
+      "tail": { "x": 0.42, "y": 0.75 }
+    }
   },
   "startedAt": "2026-09-25T04:00:00.000Z",
   "summary": null
@@ -257,23 +263,34 @@ All admin endpoints require the `ADMIN` role, checked on every request; anyone e
 - The audit log comes 50 entries to a page, newest first, ordered by time and then by id so that entries made in the same millisecond keep one order.
 - Searching by a placeholder email address finds nothing; learners without an email address are found by account ID (D1).
 - A search answers with the learner's moderation record itself, the same as `GET /v1/admin/learners/{learnerId}`, rather than with a pointer to it. The admin searched in order to see it, and the record holds nothing the search did not already entitle them to.
-- Sign-in methods in the record are `email`, `google`, `line` and `facebook`. A password is `email`, where Better Auth would call it `credential`.
+- Sign-in methods in the record are `email`, `google`, `line` and `facebook`. A password is `email`.
 
-### 3.8 Requirements served without an endpoint of their own
+### 3.8 Requests (`support` module)
+
+| Method | Path           | Purpose                                                                                    | Requirements |
+| ------ | -------------- | ------------------------------------------------------------------------------------------ | ------------ |
+| `POST` | `/v1/requests` | Send one request from the request form; `201` with `{ "reference": "LZ-20261107-7KQ2MD" }` | FR-112       |
+
+- Anyone may send one, signed in or not. `kind` is `PERSONAL_DATA`, `CONTENT_REPORT` or `SUSPENSION_APPEAL`; `address`, `location` and `harm` belong to a report, are required there and are not read otherwise: the MDES notification of 2565 asks a complaint form for the complainant's address (clause 6(1)(b)). `truthful` must be `true`; for a report, the operator's copy records it with the typed name as the signature (Electronic Transactions Act, s.9).
+- Signed in, the session's account is attached and a typed `accountId` is ignored; signed out, a typed one is passed on marked unchecked.
+- Nothing is stored. The API sends the operator's copy to `privacy@languze.com` or `support@languze.com`, with the requester as the reply address, then an acknowledgement to the requester. If the operator's copy cannot be sent, the request answers `SERVICE_UNAVAILABLE` (`503`), since it would otherwise be lost; a failed acknowledgement is only logged.
+- The acknowledgement repeats nothing the requester wrote, only the reference and what happens next: the address is not verified, and the form must not carry someone's words to any inbox they name.
+
+### 3.9 Requirements served without an endpoint of their own
 
 | Requirements                         | Where they are served                                                                                                                                                                                |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| FR-002–FR-005, FR-009                | Better Auth endpoints and LanguZe hooks (section 3.1, ADR-0003)                                                                                                                                      |
+| FR-002–FR-005, FR-009                | Authentication endpoints and LanguZe's rules in the auth module (section 3.1, ADR-0003)                                                                                                              |
 | FR-022–FR-024, FR-091–FR-095, FR-098 | The background analysis started by `POST /v1/worlds` and `POST /v1/worlds/{worldId}/retry`; results appear through the world endpoints ([image to vocabulary flow](../flows/image-to-vocabulary.md)) |
 | FR-040, FR-041, FR-043, FR-052       | Applied inside the answer endpoint and the analysis, visible as `mastery` in their responses ([game session flow](../flows/game-session.md))                                                         |
 | FR-097, FR-107                       | The admin endpoints of section 3.7, and emails to admins sent by the API ([moderation flow](../flows/moderation.md))                                                                                 |
 | FR-081                               | Environment configuration read at startup (UC-080)                                                                                                                                                   |
-| FR-099                               | Web pages: the Terms of Use, the Privacy Policy, and the contact address                                                                                                                             |
+| FR-099, FR-113                       | Web pages: the Terms of Use, the Privacy Policy, the contact page, and the notice-and-take-down policy                                                                                               |
 | FR-101                               | The promotion script run by the operator (UC-100)                                                                                                                                                    |
 
 ## 4. Error codes
 
-The generic codes (`BAD_REQUEST`, `FORBIDDEN`, `CONFLICT`, `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE`, `SERVICE_UNAVAILABLE`) are used when the framework or shared infrastructure raises an error without a more specific code. The list lives in `apps/api/src/platform/errors/error-codes.ts`.
+The generic codes (`BAD_REQUEST`, `FORBIDDEN`, `CONFLICT`, `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE`, `SERVICE_UNAVAILABLE`) are used when the framework or shared infrastructure raises an error without a more specific code. The list lives in `apps/api-dotnet/LanguZe.Api/Platform/Errors/ErrorCodes.cs`.
 
 | Code                       | Status | Meaning                                                                                |
 | -------------------------- | ------ | -------------------------------------------------------------------------------------- |
@@ -304,7 +321,7 @@ The generic codes (`BAD_REQUEST`, `FORBIDDEN`, `CONFLICT`, `PAYLOAD_TOO_LARGE`, 
 | `ACTION_NOT_APPLICABLE`    | 409    | The admin action does not fit the learner's state.                                     |
 | `CONFLICT`                 | 409    | The resource is in the wrong state, when no more specific code applies.                |
 | `PAYLOAD_TOO_LARGE`        | 413    | The request body is too large, when no more specific code applies.                     |
-| `PHOTO_TOO_LARGE`          | 413    | Over 10 MB (FR-011).                                                                   |
+| `PHOTO_TOO_LARGE`          | 413    | Over 10 MB or 120 million pixels (FR-011).                                             |
 | `PHOTO_TYPE_NOT_ALLOWED`   | 415    | Not JPEG, PNG, or WebP by content (FR-011).                                            |
 | `UNSUPPORTED_MEDIA_TYPE`   | 415    | The body type is not accepted, when no more specific code applies.                     |
 | `RATE_LIMITED`             | 429    | Too many requests in a short time (NFR-005).                                           |
@@ -318,13 +335,16 @@ The generic codes (`BAD_REQUEST`, `FORBIDDEN`, `CONFLICT`, `PAYLOAD_TOO_LARGE`, 
 
 Starting values, all configurable per environment (E3). Rate limits are kept in the API's memory (A2) and answer `RATE_LIMITED` with `Retry-After`.
 
-A limit counted against the wrong thing fails quietly — every request is still counted and every limit still answers — so two points decide whether the table below means anything. The account comes from the session the session guard has already resolved, which is why the guards are registered in that order. The address comes from `X-Forwarded-For`, counting back `TRUST_PROXY_HOPS` proxies; with the wrong number, either everyone behind one proxy shares a budget or a caller can invent an address and have as many budgets as it likes.
+A limit counted against the wrong thing fails quietly — every request is still counted and every limit still answers — so two points decide whether the table below means anything. The account comes from the session the session guard has already resolved, which is why the guards are registered in that order. A request the session guard refuses never reaches the limit, so the guard counts it first, the way its route would: by address without a session, by account for a sign-up still waiting for the Terms or a suspended account. Until 2026-11-07 those requests were not counted at all, so a caller without a session could call a guarded route without end. The address is Cloudflare's `CF-Connecting-IP` on a request that carries the origin secret, the proof it came through Cloudflare (production deployment, section 5). Otherwise it comes from `X-Forwarded-For`, counting back `TRUST_PROXY_HOPS` proxies; with the wrong number, either everyone behind one proxy shares a budget or a caller can invent an address and have as many budgets as it likes. Until 2026-11-07 production read `X-Forwarded-For` too, which Railway's edge fills with Cloudflare's address, so learners behind one Cloudflare edge shared every budget kept by address.
 
 | What                                    | Limit                     | Keyed by                       |
 | --------------------------------------- | ------------------------- | ------------------------------ |
-| Email sign-in                           | 5 attempts per 15 minutes | Email address and IP           |
+| Email sign-in                           | 5 attempts per 15 minutes | IP                             |
+| Email sign-in, per account              | 10 attempts per hour      | Email address                  |
 | Sign-up                                 | 5 per hour                | IP                             |
-| Password reset and verification emails  | 3 per hour                | Email address                  |
+| Password reset and verification emails  | 3 requests per hour       | IP                             |
+| … and emails actually sent              | 3 per hour, then none     | Email address                  |
+| Requests from the request form          | 3 per hour                | Account, or IP when signed out |
 | Photo upload and retry                  | 5 per minute              | Account                        |
 | Tutor messages                          | 10 per minute             | Account                        |
 | Admin actions                           | 30 per minute             | Admin account                  |
@@ -336,15 +356,15 @@ The daily limits of the SRS (10 analyses, 30 tutor messages) are separate and ap
 
 ## 6. Contract between web and API
 
-- The NestJS controllers and DTOs, with their OpenAPI decorators, are the source of the contract; the OpenAPI document is generated from them.
-- The web app's request and response types are generated from that OpenAPI document (E4), so a change in the API shows up as a type error in the web app instead of a bug at runtime.
-- Each endpoint gets an API end-to-end test that covers its success case and its main error codes; the acceptance criteria of the stories list them.
+- `tests/api-contract/openapi.json` is the contract. It was generated from the NestJS controllers, and the ASP.NET Core API was held to it slice by slice; `pnpm test:contract` fails while the document the API serves differs from it. A change to the API's surface changes the file on purpose.
+- The web app's request and response types are generated from that document (E4), so a change in the API shows up as a type error in the web app instead of a bug at runtime.
+- Each endpoint has contract tests that cover its success case and its main error codes, as the acceptance criteria of the stories list them; what only a provider's answer or a moved clock can reach is covered by integration tests (`tests/api-contract/COVERAGE.md`).
 
 ## Appendix A. Questions raised while writing the API design
 
 | ID  | Question                                             | Decision                                                                                                                                                                                                                                                                                                                                                     | Affects                  | Status               |
 | --- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------ | -------------------- |
-| E1  | How are paths laid out?                              | LanguZe endpoints under `/v1`, Better Auth under `/auth`, and `/health` and `/docs` at the root. Better Auth's default is `/api/auth`, which would repeat "api" on the `api.` subdomain; ADR-0003 now says `/auth`.                                                                                                                                          | All endpoints; ADR-0003  | Confirmed 2026-09-19 |
+| E1  | How are paths laid out?                              | LanguZe endpoints under `/v1`, Better Auth under `/auth`, and `/health` and `/docs` at the root. Better Auth's default is `/api/auth`, which would repeat "api" on the `api.` subdomain; ADR-0003 now says `/auth`. Kept by the ASP.NET Core API, whose provider routes stay at `/auth`.                                                                     | All endpoints; ADR-0003  | Confirmed 2026-09-19 |
 | E2  | What does an error look like?                        | One shape everywhere: a stable `code`, an English `message` for developers, and optional `details`. The web app shows Thai text for each code, so wording can change without an API release, and a later English interface needs no API change.                                                                                                              | All endpoints; web app   | Confirmed 2026-09-19 |
 | E3  | What are the starting rate limits and link lifetime? | The values in section 5. They are strict enough to stop password guessing and email flooding, loose enough that a learner playing quickly never meets them, and all can be changed per environment.                                                                                                                                                          | Section 5; configuration | Confirmed 2026-09-19 |
 | E4  | How does the web app get the API's types?            | Generate TypeScript types from the OpenAPI document with `openapi-typescript`, a development-only dependency of the web app, run by a script whenever the API changes. The alternatives are hand-written types, which drift from the API, or a shared package, which ADR-0001 reserves for stable contracts and which the OpenAPI document already provides. | Web app; tooling         | Confirmed 2026-09-19 |

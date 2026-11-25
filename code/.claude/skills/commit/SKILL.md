@@ -39,7 +39,7 @@ Stage explicit paths only. Do not use `git add .` or `git add -A`.
 
 Use Conventional Commits: `<type>(<scope>): <imperative summary>`.
 
-End the message with the `Co-Authored-By:` trailer that CLAUDE.md describes.
+End the message with the `Co-Authored-By:` trailer that AGENTS.md describes (each assistant its own).
 
 ## 5. Re-check integration branch
 
@@ -51,7 +51,7 @@ Push the current branch. Never force-push by default.
 
 ## 7. PR preparation
 
-Check whether an open PR already exists for the branch. If it exists, return its URL. If none exists, prepare a GitHub compare URL targeting `main` with a concise title/body that ends with the line CLAUDE.md describes. Ask for explicit confirmation before any PR creation action.
+Check whether an open PR already exists for the branch. If it exists, return its URL. If none exists, prepare a GitHub compare URL targeting `main` with a concise title/body that ends with the line AGENTS.md describes. Ask for explicit confirmation before any PR creation action.
 
 This skill does not run `gh pr create` or `gh pr merge`.
 

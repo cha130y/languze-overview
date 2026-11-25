@@ -9,6 +9,7 @@ import {
   type PracticeSession,
   type Question,
 } from '@/lib/api/client';
+import { ARCHIPELAGO_ANSWER_EVENT } from '@/components/scene/archipelago-sound';
 import { QuestionCard } from './question-card';
 
 const { refresh } = vi.hoisted(() => ({ refresh: vi.fn() }));
@@ -73,6 +74,45 @@ test('shows the photo and the box, and asks for the word (FR-031)', () => {
   const box = container.querySelector<HTMLElement>('[aria-hidden="true"]');
   expect(box?.style.left).toBe('20%');
   expect(box?.style.width).toBe('40%');
+});
+
+/* #73: an arrow names the object, with the question's number on its tail; the box only outlines it. */
+test('points an arrow at the object when the question has one', async () => {
+  const { container } = render(
+    <QuestionCard
+      session={session}
+      question={{
+        ...question,
+        arrow: { point: { x: 0.3, y: 0.2 }, tail: { x: 0.7, y: 0.6 } },
+      }}
+    />,
+  );
+
+  const arrow = container.querySelector<HTMLElement>('[data-question-arrow]');
+  expect(arrow).toHaveTextContent('3');
+  expect(arrow?.querySelector('span')?.style.left).toBe('70%');
+  expect(container.querySelector('[aria-hidden="true"]')?.className).toContain(
+    'border-dashed',
+  );
+  expect(screen.getByRole('img')).toHaveAccessibleName(
+    'รูปภาพของคุณ โดยมีลูกศรชี้สิ่งของที่ต้องตอบ',
+  );
+  expect(
+    screen.getByLabelText('สิ่งของที่ลูกศรชี้ ภาษาอังกฤษเรียกว่าอะไร?'),
+  ).toHaveFocus();
+  await expectNoAxeViolations(container);
+});
+
+/* Worlds made before the arrow keep their box alone (#73). */
+test('shows the box alone when the question has no arrow', () => {
+  const { container } = render(
+    <QuestionCard session={session} question={{ ...question, arrow: null }} />,
+  );
+
+  expect(container.querySelector('[data-question-arrow]')).toBeNull();
+  expect(
+    container.querySelector('[aria-hidden="true"]')?.className,
+  ).not.toContain('border-dashed');
 });
 
 /*
@@ -273,4 +313,32 @@ test('has no accessibility violations (NFR-012)', async () => {
   await userEvent.click(screen.getByRole('button', { name: 'ไม่ทราบ' }));
   await screen.findByRole('button', { name: 'ข้อต่อไป' });
   await expectNoAxeViolations(container);
+});
+
+test('tells Scene D whether the answer was right, and says nothing for "I don’t know"', async () => {
+  const heard: boolean[] = [];
+  const listen = (event: Event) =>
+    heard.push((event as CustomEvent<{ correct: boolean }>).detail.correct);
+  window.addEventListener(ARCHIPELAGO_ANSWER_EVENT, listen);
+
+  vi.mocked(api.answerQuestion).mockResolvedValue(
+    result({ correct: false, answer: 'zzz' }),
+  );
+  const { unmount } = render(
+    <QuestionCard session={session} question={question} />,
+  );
+  await userEvent.type(screen.getByLabelText(/ภาษาอังกฤษ/), 'zzz');
+  await userEvent.click(screen.getByRole('button', { name: 'ตอบ' }));
+  await screen.findByText('zzz', { exact: false });
+  unmount();
+
+  vi.mocked(api.answerQuestion).mockResolvedValue(
+    result({ correct: false, dontKnow: true, answer: null }),
+  );
+  render(<QuestionCard session={session} question={question} />);
+  await userEvent.click(screen.getByRole('button', { name: 'ไม่ทราบ' }));
+  await screen.findByRole('status');
+
+  window.removeEventListener(ARCHIPELAGO_ANSWER_EVENT, listen);
+  expect(heard).toEqual([false]);
 });

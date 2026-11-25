@@ -9,10 +9,16 @@
 export function WorldPhoto({
   photoUrl,
   alt,
+  fitScreen = false,
   children,
 }: {
   photoUrl: string | null | undefined;
   alt: string;
+  /**
+   * Shrinks the photo, whole and centred, to leave about 24rem of the screen's
+   * height for what follows it: the game's question and answer box stay in view.
+   */
+  fitScreen?: boolean;
   children?: React.ReactNode;
 }) {
   if (!photoUrl) {
@@ -24,13 +30,23 @@ export function WorldPhoto({
   }
 
   return (
-    <div className="relative overflow-hidden rounded-3xl">
+    <div
+      className={`relative overflow-hidden rounded-3xl${fitScreen ? ' mx-auto w-fit max-w-full' : ''}`}
+    >
       {/*
        * The link is signed and expires, so Next's image optimisation is not used:
        * it would cache a photo that only this learner may see (P4, NFR-008).
        */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={photoUrl} alt={alt} className="block h-auto w-full" />
+      <img
+        src={photoUrl}
+        alt={alt}
+        className={
+          fitScreen
+            ? 'block h-auto max-h-[max(14rem,min(50svh,calc(100svh-24rem)))] w-auto max-w-full'
+            : 'block h-auto w-full'
+        }
+      />
       {children}
     </div>
   );

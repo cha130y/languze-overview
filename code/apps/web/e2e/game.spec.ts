@@ -1,7 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { createWorld } from './support/app';
 
-const QUESTION = 'สิ่งของในกรอบนี้ ภาษาอังกฤษเรียกว่าอะไร?';
+// The fake provider gives no point, so each question points at the middle of its box (#73).
+const QUESTION = 'สิ่งของที่ลูกศรชี้ ภาษาอังกฤษเรียกว่าอะไร?';
 
 /** Where the fake AI provider puts each word's box: left and top, in percent. */
 const WORD_AT_BOX: Record<string, string> = {

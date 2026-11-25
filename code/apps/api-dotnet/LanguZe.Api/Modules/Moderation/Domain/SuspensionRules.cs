@@ -70,14 +70,21 @@ public static class SuspensionRules
     }
 
     /// <summary>The suspension in force that started last, or none.</summary>
-    public static SuspensionRecord? Current(IEnumerable<SuspensionRecord> all, DateTimeOffset now)
+    public static SuspensionRecord? Current(IEnumerable<SuspensionRecord> all, DateTimeOffset now) => Current(all, one => one, now);
+
+    /// <summary>The suspension in force that started last, or none, of records that hold more than the rules read, such as a reason.</summary>
+    public static T? Current<T>(IEnumerable<T> all, Func<T, SuspensionRecord> recordOf, DateTimeOffset now)
+        where T : class
     {
-        SuspensionRecord? current = null;
+        T? current = null;
+        SuspensionRecord? currentRecord = null;
         foreach (var one in all)
         {
-            if (IsInForce(one, now) && (current is null || one.StartsAt > current.StartsAt))
+            var record = recordOf(one);
+            if (IsInForce(record, now) && (currentRecord is null || record.StartsAt > currentRecord.StartsAt))
             {
                 current = one;
+                currentRecord = record;
             }
         }
 

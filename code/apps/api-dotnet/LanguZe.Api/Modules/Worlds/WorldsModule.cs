@@ -1,3 +1,4 @@
+using LanguZe.Api.Modules.Auth.Contracts;
 using LanguZe.Api.Modules.Worlds.Features.CreateWorld;
 using LanguZe.Api.Modules.Worlds.Features.DeleteWorld;
 using LanguZe.Api.Modules.Worlds.Features.GetWorld;
@@ -27,6 +28,7 @@ public static class WorldsModule
         services.AddHostedService(provider => provider.GetRequiredService<StaleAnalysis>());
         services.AddScoped<AnalysisWork>();
         services.AddScoped<Analyses>();
+        services.AddScoped<IAnalysisUsage, AnalysisAllowance>();
         services.AddScoped<WorldReader>();
         services.AddScoped<CreateWorldHandler>();
         services.AddScoped<ListWorldsHandler>();

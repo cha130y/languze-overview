@@ -15,9 +15,19 @@ internal sealed class AnalysisFailedException(AnalysisFailure reason) : Exceptio
 /// AI provider (analysis.service.ts, <c>runInBackground</c>; P2, FR-021). Nobody is waiting
 /// for an answer any more, so a failure is written down rather than thrown: the learner sees
 /// the world's status. Each run has a scope of its own, since the request's is gone.
+///
+/// At most <see cref="MaxRunning"/> run at once and the rest wait their turn, so a burst of
+/// uploads does not call the provider and decode photos all together (pre-release review,
+/// 2026-11-24). A run takes about 5 seconds, so twenty waiting finish in about half a minute,
+/// well inside the 5 minutes after which an analysis is released (V16).
 /// </summary>
-internal sealed partial class AnalysisRunner(IServiceScopeFactory scopes, ILogger<AnalysisRunner> logger)
+internal sealed partial class AnalysisRunner(IServiceScopeFactory scopes, ILogger<AnalysisRunner> logger) : IDisposable
 {
+    /// <summary>Analyses that may run at the same time; the rest wait for one to finish.</summary>
+    public const int MaxRunning = 4;
+
+    private readonly SemaphoreSlim _slots = new(MaxRunning, MaxRunning);
+
     /// <summary>Runs in flight by world, so tests can wait for one instead of polling.</summary>
     private readonly ConcurrentDictionary<Guid, Task> _running = new();
 
@@ -27,6 +37,9 @@ internal sealed partial class AnalysisRunner(IServiceScopeFactory scopes, ILogge
         _running[worldId] = run;
         _ = run.ContinueWith(_ => _running.TryRemove(new KeyValuePair<Guid, Task>(worldId, run)), TaskScheduler.Default);
     }
+
+    /// <summary>When the API stops; a run still waiting is released later, as a run cut short is (V16).</summary>
+    public void Dispose() => _slots.Dispose();
 
     /// <summary>Waits for a world's run, if one is in flight.</summary>
     public Task SettledAsync(Guid worldId) => _running.TryGetValue(worldId, out var run) ? run : Task.CompletedTask;
@@ -44,6 +57,19 @@ internal sealed partial class AnalysisRunner(IServiceScopeFactory scopes, ILogge
     };
 
     private async Task RunAsync(Guid analysisId, Guid worldId, string storageKey, string requestId)
+    {
+        await _slots.WaitAsync();
+        try
+        {
+            await RunOneAsync(analysisId, worldId, storageKey, requestId);
+        }
+        finally
+        {
+            _slots.Release();
+        }
+    }
+
+    private async Task RunOneAsync(Guid analysisId, Guid worldId, string storageKey, string requestId)
     {
         await using var scope = scopes.CreateAsyncScope();
         var work = scope.ServiceProvider.GetRequiredService<AnalysisWork>();

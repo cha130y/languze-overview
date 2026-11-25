@@ -11,14 +11,20 @@ using LanguZe.Api.Platform.Config;
 
 namespace LanguZe.Api.Tests.Ai;
 
-/// <summary>gemini-ai-provider.spec.ts, the photo half: Gemini's answers as the SDK hands them over, and what LanguZe makes of them.</summary>
+/// <summary>gemini-ai-provider.spec.ts, the photo half (the tutor half is GeminiTutorTests): Gemini's answers as the SDK hands them over, and what LanguZe makes of them.</summary>
 public sealed partial class GeminiAiProviderTests
 {
     private static readonly PhotoForAi Photo = new(Encoding.UTF8.GetBytes("a photo"), "image/jpeg");
 
     private static readonly int[] TwoNumbers = [1, 2];
 
-    private static readonly GeminiSettings Settings = new("a-key", "safety-model", "extraction-model", "tutor-model", TimeSpan.FromSeconds(30));
+    private static readonly int[] BoxOf1000 = [100, 200, 500, 600];
+
+    private static readonly int[] PointOf1000 = [300, 400];
+
+    private static readonly int[] OneNumber = [300];
+
+    private static readonly GeminiSettings Settings = new("a-key", "safety-model", "extraction-model", "tutor-model", TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30), 5);
 
     [Fact]
     public async Task The_safety_check_allows_a_photo_gemini_allows()
@@ -39,6 +45,16 @@ public sealed partial class GeminiAiProviderTests
         Assert.Equal(SafetyVerdict.Block(BlockCategory.Violence), (await provider.CheckPhotoAsync(Photo, TestContext.Current.CancellationToken)).Value);
     }
 
+    [Theory]
+    [InlineData("SUSPECTED_ILLEGAL_MATERIAL", BlockCategory.SuspectedIllegalMaterial)]
+    [InlineData("ILLEGAL_ACTIVITY", BlockCategory.IllegalActivity)]
+    public async Task The_safety_check_preserves_the_policy_category_from_its_structured_verdict(string category, BlockCategory expected)
+    {
+        var (provider, _) = Gemini(Answering(new { allowed = false, category }));
+
+        Assert.Equal(SafetyVerdict.Block(expected), (await provider.CheckPhotoAsync(Photo, TestContext.Current.CancellationToken)).Value);
+    }
+
     [Fact]
     public async Task The_safety_check_falls_back_to_OTHER_for_a_category_languze_does_not_know()
     {
@@ -54,6 +70,18 @@ public sealed partial class GeminiAiProviderTests
         var (provider, _) = Gemini(Response("""{"promptFeedback":{"blockReason":"SAFETY","safetyRatings":[{"category":"HARM_CATEGORY_SEXUALLY_EXPLICIT","blocked":true}]}}"""));
 
         Assert.Equal(SafetyVerdict.Block(BlockCategory.SexualContent), (await provider.CheckPhotoAsync(Photo, TestContext.Current.CancellationToken)).Value);
+    }
+
+    [Theory]
+    [InlineData("HARM_CATEGORY_CSAM", BlockCategory.SuspectedIllegalMaterial)]
+    [InlineData("HARM_CATEGORY_DANGEROUS_CONTENT", BlockCategory.Other)]
+    [InlineData("HARM_CATEGORY_HATE_SPEECH", BlockCategory.Other)]
+    [InlineData("HARM_CATEGORY_HARASSMENT", BlockCategory.Other)]
+    public async Task The_safety_check_does_not_overstate_a_broad_provider_refusal_category(string providerCategory, BlockCategory expected)
+    {
+        var (provider, _) = Gemini(Response($"{{\"promptFeedback\":{{\"blockReason\":\"SAFETY\",\"safetyRatings\":[{{\"category\":\"{providerCategory}\",\"blocked\":true}}]}}}}"));
+
+        Assert.Equal(SafetyVerdict.Block(expected), (await provider.CheckPhotoAsync(Photo, TestContext.Current.CancellationToken)).Value);
     }
 
     [Fact]
@@ -102,6 +130,27 @@ public sealed partial class GeminiAiProviderTests
 
         // [100, 200, 500, 600] of 1000 is x 0.2, y 0.1, width 0.4, height 0.4.
         Assert.Equal(new WordBox(0.2, 0.1, 0.4, 0.4), answer.Value.Single().Box);
+    }
+
+    // #73: [y, x] of 1000, as Gemini gives a point; without one, or misshapen, the item keeps its box alone.
+    [Fact]
+    public async Task Extraction_turns_geminis_point_into_languzes_and_does_without_one()
+    {
+        var (provider, _) = Gemini(Answering(new
+        {
+            items = new object[]
+            {
+                new { english = "sofa", thaiMeaning = "โซฟา", exampleSentence = "We sit on the sofa.", cefrLevel = "A1", box = BoxOf1000, point = PointOf1000 },
+                Item(),
+                new { english = "sofa", thaiMeaning = "โซฟา", exampleSentence = "We sit on the sofa.", cefrLevel = "A1", box = BoxOf1000, point = OneNumber },
+            },
+        }));
+
+        var items = (await provider.ExtractVocabularyAsync(Photo, TestContext.Current.CancellationToken)).Value;
+
+        Assert.Equal(new WordPoint(0.4, 0.3), items[0].Point);
+        Assert.Null(items[1].Point);
+        Assert.Null(items[2].Point);
     }
 
     [Fact]
@@ -237,13 +286,14 @@ public sealed partial class GeminiAiProviderTests
         Assert.Equal("tutor-model", provider.ModelFor(AiPurpose.Tutor));
     }
 
-    // The AI evaluation judged prompts.ts's words, so these are its SHA-256s; a change needs an evaluation run (ADR-0004).
+    // The AI evaluation judged these words (prompts.ts's, and since #73 the point), so these are their SHA-256s; a change needs an evaluation run (ADR-0004).
     [Fact]
-    public void The_instructions_are_prompts_ts_word_for_word()
+    public void The_instructions_are_the_ones_the_evaluation_judged()
     {
-        Assert.Equal("2026-09-26.1", GeminiPrompts.PromptVersion);
-        Assert.Equal("dd9ef1de88b4d4e201ed415140aa23f7601bdc08d62ff3792d44646f7e9de07d", Sha256(GeminiPrompts.SafetyInstruction));
-        Assert.Equal("7085c3745e9952f59d9e412f9cc85e65ce6c512d83362c13d4b821d5508d78a7", Sha256(GeminiPrompts.ExtractionInstruction));
+        Assert.Equal("2026-11-25.5", GeminiPrompts.PromptVersion);
+        Assert.Equal("0bed8a3d3286c58823d52e93e85140efa8e8cecae2b14d7c646d20cef99299fd", Sha256(GeminiPrompts.SafetyInstruction));
+        Assert.Equal("3741600d09fae7710bb8b45e2dd9191268014452019d36f9bedd49af8cf78c49", Sha256(GeminiPrompts.ExtractionInstruction));
+        Assert.Equal("ee9c88d042c82137b424bba6c60da39efdfe4519d50b03b4fb8b27251df1d428", Sha256(GeminiPrompts.TutorInstruction));
     }
 
     private static (GeminiAiProvider Provider, StandInModels Models) Gemini(GenerateContentResponse response)
@@ -296,5 +346,8 @@ public sealed partial class GeminiAiProviderTests
             Requests.Add((model, contents, config));
             return answer(cancellationToken);
         }
+
+        public IAsyncEnumerable<GenerateContentResponse> GenerateContentStreamAsync(string model, List<Content> contents, GenerateContentConfig config, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The photo jobs never stream.");
     }
 }

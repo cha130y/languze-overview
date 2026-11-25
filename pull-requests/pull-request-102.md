@@ -23,5 +23,3 @@ Merged 2026-10-28.
 - `dotnet build` with warnings as errors: 0 warnings; `dotnet format --verify-no-changes`
 - `pnpm format:check`, `pnpm test:scripts` (8 of 8)
 - The `contract` CI job has not run yet; this PR is its first run
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)

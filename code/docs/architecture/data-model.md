@@ -4,21 +4,22 @@
 - **Date:** 2026-09-19
 - **Release covered:** Release 1.0
 - **Source:** [SRS](../requirements/SRS.md) v0.10, [process flows](../flows/README.md), [architecture overview](overview.md)
-- **Next documents:** API design → Prisma schema and first migration
+- **Next documents:** API design → schema and first migration
+- **Updated:** 2026-11-06, for the ASP.NET Core API: EF Core and ASP.NET Core Identity in place of Prisma and Better Auth ([ADR-0006](adr/0006-aspnet-core-api.md)). Git keeps the earlier wording
 
 ## 1. Purpose
 
-This document defines the database for Release 1.0: every table, its columns, keys, and constraints, which module owns it, and what happens to it when a learner, world, or word is deleted. The Prisma schema in `apps/api/prisma` implements it and becomes the source of truth once it exists; after that, this document is updated with each schema change.
+This document defines the database for Release 1.0: every table, its columns, keys, and constraints, which module owns it, and what happens to it when a learner, world, or word is deleted. The EF Core entities and migrations in `apps/api-dotnet/LanguZe.Api/Data` implement it and are the source of truth; this document is updated with each schema change. The schema was first built by Prisma's migrations, which the `Baseline` migration still runs on an empty database, from their SQL files (ADR-0006, section 4).
 
 ## 2. Conventions
 
-- **Names:** Prisma models are singular PascalCase (`World`); tables are plural snake_case (`worlds`) through `@@map`; columns are snake_case through `@map`.
-- **IDs:** every primary key is a UUID version 7 (`@db.Uuid`, `@default(uuid(7))`), which is time-ordered for index locality and not guessable like a counter. Better Auth is configured to leave ID generation to Prisma (D5).
+- **Names:** entities are singular PascalCase (`World`, `Data/Entities`); tables are plural snake_case (`worlds`), and columns, keys and indexes keep the snake_case names Prisma gave them (`Data/SchemaNames.cs`).
+- **IDs:** every primary key is a UUID version 7, which is time-ordered for index locality and not guessable like a counter (D5). The API generates it: Npgsql's EF Core provider writes version 7 for `Guid` keys, as the rows the API creates show. The tables Identity brings with it that no one refers to keep its own keys (section 4.1).
 - **Time:** timestamps are `timestamptz` in UTC (`created_at`, `updated_at`). Where a rule depends on a calendar day in `Asia/Bangkok` (V1), the day is stored as a `date`.
-- **Enums:** PostgreSQL enums through Prisma enums (section 6).
+- **Enums:** PostgreSQL enums, mapped to C# enums (section 6).
 - **Lengths:** bounded text uses `varchar(n)` with the limit from the SRS, or from V19 where the SRS sets none (D2). The API validates the same limits.
 - **Deletion:** learner-owned rows reference `users` with `ON DELETE CASCADE`, so deleting an account removes all its data (FR-007). Where history must survive the deletion of a parent, the reference is `ON DELETE SET NULL`. Audit entries and photo cleanup records have no foreign key, so they outlive the account.
-- **Beyond Prisma:** check constraints, partial unique indexes, and the audit trigger are written as SQL in the migrations, and listed in this document.
+- **Beyond the entities:** check constraints, partial unique indexes, and the audit trigger are written as SQL in the migrations, and listed in this document.
 
 ## 3. Entity-relationship diagrams
 
@@ -27,14 +28,16 @@ This document defines the database for Release 1.0: every table, its columns, ke
 ```mermaid
 erDiagram
   users ||--o{ sessions : "has"
-  users ||--o{ auth_accounts : "signs in with"
+  users ||--o{ user_logins : "signs in with"
+  users ||--o{ user_claims : "has"
+  users ||--o{ user_tokens : "has"
   users ||--o{ stored_photos : "owns"
   users ||--o{ photo_blocks : "has"
   users ||--o{ ai_suspensions : "has"
   users |o--o{ ai_suspensions : "lifted by"
-  verifications {
-    uuid id PK
-    string identifier
+  data_protection_keys {
+    int id PK
+    string xml
   }
   photo_deletions {
     uuid id PK
@@ -51,7 +54,7 @@ erDiagram
   }
 ```
 
-`verifications`, `photo_deletions`, `admin_actions`, and `ai_calls` have no foreign keys by design: verification rows are found by their identifier, and the other three must outlive the accounts they mention or contain no personal data.
+`data_protection_keys`, `photo_deletions`, `admin_actions`, and `ai_calls` have no foreign keys by design: the keys belong to the API rather than to anyone, and the other three must outlive the accounts they mention or contain no personal data.
 
 ### 3.2 Worlds, vocabulary, learning, and the tutor
 
@@ -84,69 +87,57 @@ Types are PostgreSQL types. "Null" means the column may be empty. Every table al
 
 ### 4.1 `auth` module
 
-The four Better Auth tables keep Better Auth's model and field names in Prisma (`User`, `Session`, `Account`, `Verification`), mapped to the table names below. Better Auth's `Account` model is called `auth_accounts` in the database so it is not confused with a learner's account.
+The tables of ASP.NET Core Identity, mapped onto the schema LanguZe already had: Identity's user is `users`, each learner keeping the ID they signed up with. Until the cutover of 2026-11-06 Better Auth's tables held the same accounts; `ReshapeAuth` moved them over and `DropBetterAuthTables` dropped what was left (ADR-0006, section 5).
 
 **`users`:** one row per account, learner or admin (SRS 1.3).
 
-| Column              | Type            | Null | Notes                                                                                      |
-| ------------------- | --------------- | ---- | ------------------------------------------------------------------------------------------ |
-| `id`                | uuid            | no   | Primary key; also the account ID shown to learners (FR-108).                               |
-| `name`              | varchar(50)     | no   | Display name, 1–50 characters (V12, V19).                                                  |
-| `birth_year`        | smallint        | yes  | Year of birth given at sign-up (FR-090, V20). Empty only for a pending provider sign-up.   |
-| `email`             | varchar(254)    | no   | Unique. A placeholder ending in `.invalid` for accounts without an email address (D1).     |
-| `email_verified`    | boolean         | no   | Default `false`. Set by email verification or a verified provider email (FR-004, FR-009).  |
-| `image`             | text            | yes  | Better Auth field; left empty, since LanguZe shows no profile pictures.                    |
-| `role`              | `UserRole`      | no   | Default `LEARNER`. Changed only by the promotion script (FR-101).                          |
-| `status`            | `AccountStatus` | no   | Default `ACTIVE`. `SUSPENDED` blocks sign-in (FR-105).                                     |
-| `terms_accepted_at` | timestamptz     | yes  | Empty only for a pending provider sign-up, which is removed after 15 minutes (FR-090, U5). |
-| `created_at`        | timestamptz     | no   | Account age for the moderation record (FR-104).                                            |
-| `updated_at`        | timestamptz     | no   |                                                                                            |
+| Column                 | Type            | Null | Notes                                                                                                                                                                                                                       |
+| ---------------------- | --------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                   | uuid            | no   | Primary key; also the account ID shown to learners (FR-108).                                                                                                                                                                |
+| `name`                 | varchar(50)     | no   | Display name, 1–50 characters (V12, V19).                                                                                                                                                                                   |
+| `birth_year`           | smallint        | yes  | Year of birth given at sign-up (FR-090, V20). Empty only for a pending provider sign-up.                                                                                                                                    |
+| `email`                | varchar(254)    | no   | Unique, lowercased. A placeholder ending in `.invalid` for accounts without an email address (D1).                                                                                                                          |
+| `email_verified`       | boolean         | no   | Default `false`. Set by email verification or a verified provider email (FR-004, FR-009). Identity's `EmailConfirmed`.                                                                                                      |
+| `user_name`            | varchar(254)    | yes  | Identity's user name, which is the email address.                                                                                                                                                                           |
+| `normalized_user_name` | varchar(254)    | yes  | Upper-cased, unique; how Identity finds an account. `ReshapeAuth` filled it with PostgreSQL's `upper()`, which agrees with .NET's for ASCII only, so it refused any other address.                                          |
+| `normalized_email`     | varchar(254)    | yes  | Upper-cased email. Indexed.                                                                                                                                                                                                 |
+| `password_hash`        | text            | yes  | Empty for an account that signs in only through a provider, and removed when a provider joins an unverified account (U6). A hash Better Auth wrote stays until the learner's next sign-in rewrites it in Identity's format. |
+| `security_stamp`       | text            | yes  | Changes when the password does, which ends every outstanding reset link.                                                                                                                                                    |
+| `concurrency_stamp`    | text            | yes  | Identity's guard against two writes to one account at once.                                                                                                                                                                 |
+| `image`                | text            | yes  | Left empty, since LanguZe shows no profile pictures. Kept from Better Auth's table.                                                                                                                                         |
+| `role`                 | `UserRole`      | no   | Default `LEARNER`. Changed only by `promote-admins` (FR-101).                                                                                                                                                               |
+| `status`               | `AccountStatus` | no   | Default `ACTIVE`. `SUSPENDED` blocks sign-in (FR-105).                                                                                                                                                                      |
+| `terms_accepted_at`    | timestamptz     | yes  | Empty only for a pending provider sign-up, which is removed after 15 minutes (FR-090, U5).                                                                                                                                  |
+| `created_at`           | timestamptz     | no   | Account age for the moderation record (FR-104).                                                                                                                                                                             |
+| `updated_at`           | timestamptz     | no   |                                                                                                                                                                                                                             |
 
-Verified for AI features (SRS 1.3) is not stored: it is `email_verified`, or at least one `auth_accounts` row for Google, LINE, or Facebook (V13, V14).
+Verified for AI features (SRS 1.3) is not stored: it is `email_verified`, or at least one `user_logins` row for Google, LINE, or Facebook (V13, V14).
 
-**`sessions`:** Better Auth sessions (section 3 of the [authentication flow](../flows/authentication.md#3-authorizing-every-request)).
+**`sessions`:** signed-in sessions (section 3 of the authentication flow). The cookie carries only the row's ID, protected by Data Protection; the ticket stays here, so deleting the row ends the session at once.
 
-| Column       | Type        | Null | Notes                                                                                                                                                                                                                                                                         |
-| ------------ | ----------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`         | uuid        | no   | Primary key.                                                                                                                                                                                                                                                                  |
-| `user_id`    | uuid        | no   | → `users`, cascade. Indexed.                                                                                                                                                                                                                                                  |
-| `token`      | text        | no   | Unique. The session cookie's value.                                                                                                                                                                                                                                           |
-| `expires_at` | timestamptz | no   |                                                                                                                                                                                                                                                                               |
-| `ip_address` | text        | yes  | Empty in practice. Email sign-up and sign-in reach Better Auth without the request's headers. A provider sign-in brings them, but Better Auth takes the address only from an `X-Forwarded-For` holding one, and behind Cloudflare and Railway it holds two. Nothing reads it. |
-| `user_agent` | text        | yes  | The browser, for a Google, LINE or Facebook sign-in, which reaches Better Auth with the browser's own request. Empty for email sign-up and sign-in. Nothing reads it.                                                                                                         |
-| `created_at` | timestamptz | no   |                                                                                                                                                                                                                                                                               |
-| `updated_at` | timestamptz | no   |                                                                                                                                                                                                                                                                               |
+| Column       | Type        | Null | Notes                                                                                         |
+| ------------ | ----------- | ---- | --------------------------------------------------------------------------------------------- |
+| `id`         | uuid        | no   | Primary key, named by the cookie.                                                             |
+| `user_id`    | uuid        | no   | → `users`, cascade. Indexed.                                                                  |
+| `ticket`     | bytea       | no   | The authentication ticket, serialized: the account and its claims, and no address or browser. |
+| `expires_at` | timestamptz | no   | Seven days from issue, moved on when the session is used a day or more after it was issued.   |
+| `created_at` | timestamptz | no   |                                                                                               |
+| `updated_at` | timestamptz | no   |                                                                                               |
 
-**`auth_accounts`:** Better Auth's link between an account and a sign-in method: the email password, or a Google, LINE, or Facebook identity.
+**`user_logins`:** a Google, LINE, or Facebook identity that signs in to an account.
 
-| Column                     | Type        | Null | Notes                                                                                    |
-| -------------------------- | ----------- | ---- | ---------------------------------------------------------------------------------------- |
-| `id`                       | uuid        | no   | Primary key.                                                                             |
-| `user_id`                  | uuid        | no   | → `users`, cascade. Indexed.                                                             |
-| `provider_id`              | text        | no   | `credential`, `google`, `line`, or `facebook`.                                           |
-| `account_id`               | text        | no   | The provider's user ID; for `credential`, the user's ID. Unique with `provider_id`.      |
-| `password`                 | text        | yes  | Password hash, for `credential` only. Removed when an unverified account is linked (U6). |
-| `access_token`             | text        | yes  | Kept empty (D3).                                                                         |
-| `refresh_token`            | text        | yes  | Kept empty (D3).                                                                         |
-| `id_token`                 | text        | yes  | Kept empty (D3).                                                                         |
-| `access_token_expires_at`  | timestamptz | yes  | Kept empty (D3).                                                                         |
-| `refresh_token_expires_at` | timestamptz | yes  | Kept empty (D3).                                                                         |
-| `scope`                    | text        | yes  |                                                                                          |
-| `created_at`               | timestamptz | no   |                                                                                          |
-| `updated_at`               | timestamptz | no   |                                                                                          |
+| Column                  | Type | Null | Notes                                                             |
+| ----------------------- | ---- | ---- | ----------------------------------------------------------------- |
+| `login_provider`        | text | no   | `google`, `line`, or `facebook`. Primary key with `provider_key`. |
+| `provider_key`          | text | no   | The provider's user ID.                                           |
+| `provider_display_name` | text | yes  |                                                                   |
+| `user_id`               | uuid | no   | → `users`, cascade. Indexed.                                      |
 
-**`verifications`:** Better Auth's single-use values: a password reset (FR-005), and the state a Google or LINE sign-in carries through its redirect (FR-003). Email verification (FR-004) is not stored here at all — its link carries a signed token that needs no row.
+**`user_claims`** and **`user_tokens`:** Identity's tables for extra claims and for tokens kept per account. LanguZe uses neither: provider tokens are not kept (D3), and email links carry their own protected tokens rather than rows. Both reference `users` with a cascade.
 
-| Column       | Type        | Null | Notes                                                                                                                                             |
-| ------------ | ----------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`         | uuid        | no   | Primary key.                                                                                                                                      |
-| `identifier` | text        | no   | How the row is found: `reset-password:` and the token for a reset, the bare state token for a sign-in. Never an email address. Indexed.           |
-| `value`      | text        | no   | For a reset, the ID of the account it resets; for a sign-in, JSON.                                                                                |
-| `expires_at` | timestamptz | no   | A reset lasts an hour, a sign-in's state ten minutes. Better Auth deletes every expired row each time it looks one up; no task of LanguZe's does. |
-| `created_at` | timestamptz | no   |                                                                                                                                                   |
-| `updated_at` | timestamptz | no   |                                                                                                                                                   |
+**`data_protection_keys`:** the API's Data Protection keys, which protect the session cookie and email links. Each key's XML is encrypted with AES-256-GCM under `DATA_PROTECTION_KEY`, which only the environment holds, so a copy of the database cannot forge a cookie (ADR-0003). Not personal data.
 
-Account deletion also removes, in the same transaction, the rows whose value is the account's ID: the password resets it asked for and never used. Left alone they would outlive the account by up to an hour, holding an ID with nothing behind it. Nothing else in the table belongs to an account — a sign-in's state lasts ten minutes, and names an account only while a provider is being linked to one.
+Email verification and password reset links store nothing: each carries a token protected by Data Protection, which expires after an hour. A provider sign-in's state travels in its redirect and a short-lived cookie, never in a table.
 
 ### 4.2 `storage` module
 
@@ -228,36 +219,67 @@ Indexes: (`learner_id`, `started_at`) for the daily count; (`status`, `started_a
 
 ### 4.5 `vocabulary` module
 
-**`vocabulary_words`:** a learner's word, identified by its English word and Thai meaning (FR-043).
+**`vocabulary_words`:** a learner's word, one per English word (FR-043). The games ask for the English, so one English word is one word with one mastery, whatever Thai meaning each photo gave it. Until 2026-11-07 a word was its English and its Thai meaning together, so a model that answered กาต้มน้ำ in one photo and กาน้ำร้อน in another gave the learner two words; `WordsByEnglish` merged them into the oldest, moving each photo's meaning to its occurrence first (#72).
 
-| Column             | Type         | Null | Notes                                                                                      |
-| ------------------ | ------------ | ---- | ------------------------------------------------------------------------------------------ |
-| `id`               | uuid         | no   | Primary key.                                                                               |
-| `learner_id`       | uuid         | no   | → `users`, cascade.                                                                        |
-| `english`          | varchar(40)  | no   | Normalized English word in singular base form (SRS 4.2, AIR-003); also displayed.          |
-| `thai_meaning`     | varchar(100) | no   | Thai meaning as displayed (V19).                                                           |
-| `thai_meaning_key` | varchar(100) | no   | The Thai meaning with surrounding spaces removed and inner spaces collapsed, for identity. |
-| `created_at`       | timestamptz  | no   |                                                                                            |
+| Column         | Type         | Null | Notes                                                                                       |
+| -------------- | ------------ | ---- | ------------------------------------------------------------------------------------------- |
+| `id`           | uuid         | no   | Primary key.                                                                                |
+| `learner_id`   | uuid         | no   | → `users`, cascade.                                                                         |
+| `english`      | varchar(40)  | no   | Normalized English word in singular base form (SRS 4.2, AIR-003); also displayed.           |
+| `thai_meaning` | varchar(100) | no   | The Thai meaning of its first occurrence, for the places that show no photo (V19, SRS 2.4). |
+| `created_at`   | timestamptz  | no   |                                                                                             |
 
-Unique: (`learner_id`, `english`, `thai_meaning_key`). A word is deleted, with its mastery and attempts, when its last occurrence is removed (FR-015, FR-027).
+Unique: (`learner_id`, `english`). A word is deleted, with its mastery and attempts, when its last occurrence is removed (FR-015, FR-027).
 
 **`word_occurrences`:** a word in one world's photo (SRS 1.3).
 
-| Column               | Type             | Null | Notes                                                                           |
-| -------------------- | ---------------- | ---- | ------------------------------------------------------------------------------- |
-| `id`                 | uuid             | no   | Primary key.                                                                    |
-| `world_id`           | uuid             | no   | → `worlds`, cascade.                                                            |
-| `vocabulary_word_id` | uuid             | no   | → `vocabulary_words`, cascade. Indexed.                                         |
-| `box_x`              | double precision | no   | Highlight box, relative to the prepared photo (0–1).                            |
-| `box_y`              | double precision | no   |                                                                                 |
-| `box_width`          | double precision | no   |                                                                                 |
-| `box_height`         | double precision | no   |                                                                                 |
-| `example_sentence`   | varchar(200)     | no   | A1–B1 English containing the word or a variant (AIR-003, AIR-005, V19).         |
-| `cefr_level`         | `CefrLevel`      | no   |                                                                                 |
-| `accepted_variants`  | varchar(40)[]    | no   | Normalized, unique, at most 10 (AIR-003, V19). The word itself is not repeated. |
-| `created_at`         | timestamptz      | no   |                                                                                 |
+| Column               | Type             | Null | Notes                                                                                         |
+| -------------------- | ---------------- | ---- | --------------------------------------------------------------------------------------------- |
+| `id`                 | uuid             | no   | Primary key.                                                                                  |
+| `world_id`           | uuid             | no   | → `worlds`, cascade.                                                                          |
+| `vocabulary_word_id` | uuid             | no   | → `vocabulary_words`, cascade. Indexed.                                                       |
+| `thai_meaning`       | varchar(100)     | no   | The Thai meaning the analysis gave the word in this photo, shown in this world (FR-043, V19). |
+| `box_x`              | double precision | no   | Highlight box, relative to the prepared photo (0–1).                                          |
+| `box_y`              | double precision | no   |                                                                                               |
+| `box_width`          | double precision | no   |                                                                                               |
+| `box_height`         | double precision | no   |                                                                                               |
+| `point_x`            | double precision | yes  | Where the question's arrow points, on the object, relative to the prepared photo (0–1; #73).  |
+| `point_y`            | double precision | yes  |                                                                                               |
+| `tail_x`             | double precision | yes  | Where the arrow starts, on a plain part of the photo; the question's number sits there.       |
+| `tail_y`             | double precision | yes  |                                                                                               |
+| `point_source`       | `PointSource`    | yes  | `MODEL`, `BOX_CENTRE` or `FREE_SPOT`: where the spot came from (ADR-0004).                    |
+| `example_sentence`   | varchar(200)     | no   | A1–B1 English containing the word or a variant (AIR-003, AIR-005, V19).                       |
+| `cefr_level`         | `CefrLevel`      | no   |                                                                                               |
+| `accepted_variants`  | varchar(40)[]    | no   | Normalized, unique, at most 10 (AIR-003, V19). The word itself is not repeated.               |
+| `created_at`         | timestamptz      | no   |                                                                                               |
 
-Unique: (`world_id`, `vocabulary_word_id`), because duplicates within a photo are merged (AIR-004). Check constraint: the box lies inside 0–1 with a width and height above 0 (AIR-003). A `READY` world has 3–12 occurrences when its analysis finishes (FR-024), enforced by the API; the learner may later remove words down to one (FR-026).
+Unique: (`world_id`, `vocabulary_word_id`), because duplicates within a photo are merged (AIR-004). Check constraints: the box lies inside 0–1 with a width and height above 0 (AIR-003); the arrow columns are all empty or all set, inside 0–1. Worlds analysed before the arrow have none, and their questions show the box alone. A `READY` world has 3–12 occurrences when its analysis finishes (FR-024), enforced by the API; the learner may later remove words down to one (FR-026).
+
+**`closed_accounts`** (users; FR-111, ADR-0007). What identifies an account after it is deleted, written in the deletion's transaction and kept 90 days, as the Computer Crime Act requires (s.26 paragraph 2). Everything else the learner had goes at once (FR-007).
+
+| Column               | Type           | Null | Notes                                                                           |
+| -------------------- | -------------- | ---- | ------------------------------------------------------------------------------- |
+| `account_id`         | uuid           | no   | Primary key; the deleted account's ID. No foreign key: it outlives the account. |
+| `email`              | varchar(254)   | yes  | Empty when the account had none, or only a placeholder (D1).                    |
+| `provider_accounts`  | varchar(300)[] | no   | Each linked sign-in as `provider:key`, such as `line:U1234…`.                   |
+| `account_created_at` | timestamptz    | no   |                                                                                 |
+| `closed_at`          | timestamptz    | no   | Indexed. The record is deleted 90 days after it, by the database's clock.       |
+| `closed_by_admin`    | boolean        | no   | Whether an admin deleted the account (FR-105) rather than the learner (FR-007). |
+
+Two triggers refuse every UPDATE and TRUNCATE, and any DELETE before the 90 days are up, so neither a bug nor a stray query can shorten the time the law sets. A job deletes each record when its 90 days are up, reading the database only when one is due.
+
+**`traffic_events`** (platform; FR-110, ADR-0007). The traffic data the Computer Crime Act requires for 90 days (s.26 paragraph 1): one row per sign-up, sign-in, failed sign-in, sign-out, photo upload, tutor message, or account deletion. Each is written in the request it records, in the same transaction where the action has one, and a failure to write it fails the request. Not every request is logged.
+
+| Column        | Type                 | Null | Notes                                                                                                                                                                                                               |
+| ------------- | -------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`          | uuid                 | no   | Primary key.                                                                                                                                                                                                        |
+| `kind`        | `traffic_event_kind` | no   | `SIGN_UP`, `SIGN_IN`, `SIGN_IN_FAILED`, `SIGN_OUT`, `PHOTO_UPLOAD`, `TUTOR_MESSAGE`, or `ACCOUNT_DELETED`.                                                                                                          |
+| `account_id`  | uuid                 | yes  | Indexed. Empty for a failed sign-in to an address no account has; the address typed is never kept. No foreign key: it outlives the account.                                                                         |
+| `via`         | varchar(20)          | yes  | For a sign-up or sign-in: `password`, `google`, `line`, or `facebook`.                                                                                                                                              |
+| `ip`          | inet                 | yes  | The caller's address: Cloudflare's `CF-Connecting-IP` behind Cloudflare, otherwise `X-Forwarded-For` within `TRUST_PROXY_HOPS` (API design, section 5). The first events, on 2026-11-07, hold Cloudflare's address. |
+| `occurred_at` | timestamptz          | no   | Indexed.                                                                                                                                                                                                            |
+
+The same two triggers as `closed_accounts` keep each row unchanged for 90 days. A job deletes rows past 90 days, at most once a day, reading the database only when one is due.
 
 ### 4.6 `learning` module
 
@@ -403,68 +425,71 @@ Check constraints: an end time must come after the start; a lift must carry a ti
 
 Index also on `learner_id`. Database triggers reject every update and delete (D4), and a check constraint rejects a reason that is empty or only whitespace (FR-105, V19).
 
-There are two triggers, because one cannot do it: `UPDATE` and `DELETE` fire per row, while `TRUNCATE` fires per statement and would otherwise walk straight past a row trigger and empty the whole log. The error keeps PostgreSQL's default code for a raised exception; a more descriptive code such as `restrict_violation` sits in SQLSTATE class 23, which Prisma reports as "Foreign key constraint violated", dropping the message with it.
+There are two triggers, because one cannot do it: `UPDATE` and `DELETE` fire per row, while `TRUNCATE` fires per statement and would otherwise walk straight past a row trigger and empty the whole log. The error keeps PostgreSQL's default code for a raised exception; a more descriptive code such as `restrict_violation` sits in SQLSTATE class 23, which Prisma, the NestJS API's ORM, reported as "Foreign key constraint violated", dropping the message with it.
 
 ### 4.9 Tables written by another module
 
-The module a table is listed under above owns it: the ASP.NET Core port keeps that as its map of ownership (ADR-0006, section 1). Every module may read any table, as every NestJS module reads through one Prisma client. Writing another module's table is the exception, and these are all of them, found in the NestJS code on 2026-10-28:
+The module a table is listed under above owns it, and the API keeps that as its map of ownership (ADR-0006, section 1). Every module may read any table, through the one database context. Writing another module's table is the exception, and these are all of them, found in the NestJS code on 2026-10-28 and kept by the port:
 
-| Writer     | Table (owner)                                                        | Why                                                                     |
-| ---------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| moderation | `users` (auth): update; `sessions` (auth): delete                    | Suspending an account sets its status and ends its sessions (FR-105)    |
-| users      | `users`, `verifications` (auth): delete; `photo_deletions` (storage) | Deleting an account (FR-007, section 5)                                 |
-| worlds     | `stored_photos`, `photo_deletions` (storage)                         | Storing a world's photo, and queuing it for deletion with the world     |
-| worlds     | `vocabulary_words`, `word_occurrences` (vocabulary)                  | The analysis saves the words; vocabulary holds only rules, no endpoints |
-| worlds     | `photo_blocks` (moderation)                                          | A photo the safety check blocks is recorded for review (FR-092)         |
+| Writer     | Table (owner)                                       | Why                                                                     |
+| ---------- | --------------------------------------------------- | ----------------------------------------------------------------------- |
+| moderation | `users` (auth): update; `sessions` (auth): delete   | Suspending an account sets its status and ends its sessions (FR-105)    |
+| users      | `users` (auth): delete; `photo_deletions` (storage) | Deleting an account (FR-007, section 5)                                 |
+| worlds     | `stored_photos`, `photo_deletions` (storage)        | Storing a world's photo, and queuing it for deletion with the world     |
+| worlds     | `vocabulary_words`, `word_occurrences` (vocabulary) | The analysis saves the words; vocabulary holds only rules, no endpoints |
+| worlds     | `photo_blocks` (moderation)                         | A photo the safety check blocks is recorded for review (FR-092)         |
 
 A new write across owners is a decision to explain in its pull request, and belongs in this table. If a module ever leaves the monolith, these rows are the places that turn into calls or events.
 
 ## 5. What happens on deletion
 
-| Deleted                   | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Account (`users` row)     | Cascades to every learner-owned table. In the same transaction, the API writes `photo_deletions` for the learner's `stored_photos` and deletes the `verifications` rows holding the account's ID, which are its unused password resets. `admin_actions` stay, with IDs only; `ai_suspensions.lifted_by` of other learners becomes empty. The account row is locked before the photos are read, so a photo stored in between cannot be cascaded away without a cleanup record. |
-| World                     | Cascades to its `word_occurrences`. The API deletes words left without occurrences (cascading to their mastery and attempts), deletes the world's `stored_photos` rows, and writes `photo_deletions`. `analyses`, `practice_sessions`, and `session_questions` keep their rows with the links cleared.                                                                                                                                                                        |
-| Word removed from a world | The occurrence is deleted; if it was the word's last occurrence, the word is deleted too, as for a world.                                                                                                                                                                                                                                                                                                                                                                     |
-| Blocked photo             | The `stored_photos` rows are deleted and `photo_deletions` written; the world keeps its row with `photo_id` empty.                                                                                                                                                                                                                                                                                                                                                            |
-| Tutor conversation        | Deletes `tutor_messages` only; `tutor_daily_usage` stays.                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Deleted                   | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Account (`users` row)     | Cascades to every learner-owned table. In the same transaction, the API writes `photo_deletions` for the learner's `stored_photos`. Its sessions and provider identities go with the cascade, and an unused reset link stops working, since it names an account that no longer exists. `admin_actions` stay, with IDs only; `ai_suspensions.lifted_by` of other learners becomes empty. The account row is locked before the photos are read, so a photo stored in between cannot be cascaded away without a cleanup record. |
+| World                     | Cascades to its `word_occurrences`. The API deletes words left without occurrences (cascading to their mastery and attempts), deletes the world's `stored_photos` rows, and writes `photo_deletions`. `analyses`, `practice_sessions`, and `session_questions` keep their rows with the links cleared.                                                                                                                                                                                                                       |
+| Word removed from a world | The occurrence is deleted; if it was the word's last occurrence, the word is deleted too, as for a world.                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Blocked photo             | The `stored_photos` rows are deleted and `photo_deletions` written; the world keeps its row with `photo_id` empty.                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Tutor conversation        | Deletes `tutor_messages` only; `tutor_daily_usage` stays.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ## 6. Enums
 
-| Enum                  | Values                                                                                                                           |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `UserRole`            | `LEARNER`, `ADMIN`                                                                                                               |
-| `AccountStatus`       | `ACTIVE`, `SUSPENDED`                                                                                                            |
-| `PhotoKind`           | `PREPARED`, `THUMBNAIL`                                                                                                          |
-| `PhotoDeletionReason` | `WORLD_DELETED`, `ACCOUNT_DELETED`, `PHOTO_BLOCKED`, `UPLOAD_FAILED`                                                             |
-| `AiPurpose`           | `SAFETY_CHECK`, `EXTRACTION`, `TUTOR`                                                                                            |
-| `AiOutcome`           | `SUCCEEDED`, `FAILED`, `TIMED_OUT`, `INVALID_OUTPUT`                                                                             |
-| `WorldStatus`         | `ANALYZING`, `READY`, `FAILED`                                                                                                   |
-| `AnalysisStatus`      | `IN_PROGRESS`, `SUCCEEDED`, `BLOCKED`, `FAILED`                                                                                  |
-| `AnalysisFailure`     | `BLOCKED`, `TOO_FEW_WORDS`, `PROVIDER_ERROR`, `INVALID_OUTPUT`, `TIMED_OUT`                                                      |
-| `CefrLevel`           | `A1`, `A2`, `B1`, `B2`, `C1`, `C2`                                                                                               |
-| `MasteryLevel`        | `LEARNING`, `FAMILIAR`, `MASTERED` (`NEW` is the absence of a row)                                                               |
-| `SessionKind`         | `GAME`, `REVIEW`                                                                                                                 |
-| `SessionStatus`       | `IN_PROGRESS`, `COMPLETED`, `ABANDONED`                                                                                          |
-| `TutorRole`           | `LEARNER`, `TUTOR`                                                                                                               |
-| `BlockCategory`       | `SEXUAL_CONTENT`, `SUSPECTED_ILLEGAL_MATERIAL`, `VIOLENCE`, `ILLEGAL_ACTIVITY`, `HATE_SYMBOL`, `PERSONAL_DATA`, `OTHER` (FR-091) |
-| `SuspensionReason`    | `REPEATED_BLOCKS` (level 1), `REPEATED_AFTER_SUSPENSION` (level 2), `SUSPECTED_ILLEGAL_MATERIAL` (FR-098)                        |
-| `AdminActionType`     | `LIFT_AI_SUSPENSION`, `SET_AI_SUSPENSION_END`, `SUSPEND_ACCOUNT`, `REACTIVATE_ACCOUNT`, `DELETE_ACCOUNT`                         |
+| Enum                  | Values                                                                                                                                                                                                                            |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `UserRole`            | `LEARNER`, `ADMIN`                                                                                                                                                                                                                |
+| `AccountStatus`       | `ACTIVE`, `SUSPENDED`                                                                                                                                                                                                             |
+| `PhotoKind`           | `PREPARED`, `THUMBNAIL`                                                                                                                                                                                                           |
+| `PhotoDeletionReason` | `WORLD_DELETED`, `ACCOUNT_DELETED`, `PHOTO_BLOCKED`, `UPLOAD_FAILED`                                                                                                                                                              |
+| `AiPurpose`           | `SAFETY_CHECK`, `EXTRACTION`, `TUTOR`                                                                                                                                                                                             |
+| `AiOutcome`           | `SUCCEEDED`, `FAILED`, `TIMED_OUT`, `INVALID_OUTPUT`                                                                                                                                                                              |
+| `WorldStatus`         | `ANALYZING`, `READY`, `FAILED`                                                                                                                                                                                                    |
+| `AnalysisStatus`      | `IN_PROGRESS`, `SUCCEEDED`, `BLOCKED`, `FAILED`                                                                                                                                                                                   |
+| `AnalysisFailure`     | `BLOCKED`, `TOO_FEW_WORDS`, `PROVIDER_ERROR`, `INVALID_OUTPUT`, `TIMED_OUT`                                                                                                                                                       |
+| `CefrLevel`           | `A1`, `A2`, `B1`, `B2`, `C1`, `C2`                                                                                                                                                                                                |
+| `PointSource`         | `MODEL`, `BOX_CENTRE`, `FREE_SPOT` (#73)                                                                                                                                                                                          |
+| `MasteryLevel`        | `LEARNING`, `FAMILIAR`, `MASTERED` (`NEW` is the absence of a row)                                                                                                                                                                |
+| `SessionKind`         | `GAME`, `REVIEW`                                                                                                                                                                                                                  |
+| `SessionStatus`       | `IN_PROGRESS`, `COMPLETED`, `ABANDONED`                                                                                                                                                                                           |
+| `TutorRole`           | `LEARNER`, `TUTOR`                                                                                                                                                                                                                |
+| `BlockCategory`       | `SEXUAL_CONTENT`, `SUSPECTED_ILLEGAL_MATERIAL` (suspected sexual content involving minors only), `VIOLENCE`, `ILLEGAL_ACTIVITY` (including illicit drugs/controlled substances), `HATE_SYMBOL`, `PERSONAL_DATA`, `OTHER` (FR-091) |
+| `SuspensionReason`    | `REPEATED_BLOCKS` (level 1), `REPEATED_AFTER_SUSPENSION` (level 2), `SUSPECTED_ILLEGAL_MATERIAL` (FR-098)                                                                                                                         |
+| `AdminActionType`     | `LIFT_AI_SUSPENSION`, `SET_AI_SUSPENSION_END`, `SUSPEND_ACCOUNT`, `REACTIVATE_ACCOUNT`, `DELETE_ACCOUNT`                                                                                                                          |
 
 ## 7. Personal data
 
 For the Privacy Policy and PDPA requests, this is where personal data lives and how it is removed. A learner deletes everything themselves with `DELETE /v1/me`, which removes the `users` row; every table below with a foreign key to it is removed by the cascade in the same statement.
 
-| Data                                       | Where                                        | Removed                                                    |
-| ------------------------------------------ | -------------------------------------------- | ---------------------------------------------------------- |
-| Email address, display name, year of birth | `users`                                      | With the account.                                          |
-| Sign-in identities at providers            | `auth_accounts.account_id`                   | With the account.                                          |
-| IP address and browser of sessions         | `sessions`                                   | With the session or the account.                           |
-| Photos of the learner's surroundings       | Photo storage, referenced by `stored_photos` | Within 24 hours of the world or account deletion (V10).    |
-| World names, words, answers, mistakes      | `worlds`, `vocabulary_words`, `attempts`     | With the world, the word, or the account.                  |
-| Tutor conversation                         | `tutor_messages`                             | When cleared, or with the account.                         |
-| Moderation history                         | `photo_blocks`, `ai_suspensions`             | With the account (U8).                                     |
-| Account identifiers in the audit log       | `admin_actions`                              | Kept by design (FR-106); IDs only, no other personal data. |
+| Data                                       | Where                                        | Removed                                                            |
+| ------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------ |
+| Email address, display name, year of birth | `users`                                      | With the account.                                                  |
+| Sign-in identities at providers            | `user_logins.provider_key`                   | With the account.                                                  |
+| Sessions                                   | `sessions`, which hold no address or browser | With the session or the account.                                   |
+| Photos of the learner's surroundings       | Photo storage, referenced by `stored_photos` | Within 24 hours of the world or account deletion (V10).            |
+| World names, words, answers, mistakes      | `worlds`, `vocabulary_words`, `attempts`     | With the world, the word, or the account.                          |
+| Tutor conversation                         | `tutor_messages`                             | When cleared, or with the account.                                 |
+| Moderation history                         | `photo_blocks`, `ai_suspensions`             | With the account (U8).                                             |
+| Account identifiers in the audit log       | `admin_actions`                              | Kept by design (FR-106); IDs only, no other personal data.         |
+| Traffic data: events, account, IP address  | `traffic_events`                             | 90 days after the event, whatever happens to the account (FR-110). |
+| What identifies a deleted account          | `closed_accounts`                            | 90 days after the deletion (FR-111).                               |
 
 `ai_calls` and `photo_deletions` contain no personal data.
 
@@ -474,6 +499,6 @@ For the Privacy Policy and PDPA requests, this is where personal data lives and 
 | --- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | -------------------- |
 | D1  | Better Auth requires an email address on every account, but LINE and Facebook accounts may have none (FR-009). How are they stored? | Follow Better Auth's documented approach: give such accounts a placeholder address built from the provider and the provider's user ID, on the reserved `.invalid` domain, for example `line.U1234@no-email.languze.invalid`. The `.invalid` domain can never receive mail. The API treats any address ending in `.invalid` as "no email address": it never sends email to it, offers no password reset, never shows it to the learner, and admin search finds such learners by account ID instead (FR-108). | `users.email`; auth configuration; FR-009 | Confirmed 2026-09-19 |
 | D2  | The SRS sets no length for some stored text. What limits apply?                                                                     | Display name 1–50 characters; Thai meaning 1–100; example sentence up to 200; at most 10 accepted variants per word, each up to 40 like the word itself; typed answer up to 100; admin reason 1–500. Recorded in SRS v0.9 as V19.                                                                                                                                                                                                                                                                           | Column types; API validation; SRS         | Confirmed 2026-09-19 |
-| D3  | Better Auth can store the access, refresh, and ID tokens returned by Google, LINE, and Facebook. Should LanguZe keep them?          | No. LanguZe never calls those providers after sign-in, so a stolen database would hand an attacker working tokens for nothing. A Better Auth database hook clears the token fields before they are saved. If that proves impractical, Better Auth's `encryptOAuthTokens` option encrypts them instead.                                                                                                                                                                                                      | `auth_accounts`; Better Auth ADR          | Confirmed 2026-09-19 |
+| D3  | Better Auth can store the access, refresh, and ID tokens returned by Google, LINE, and Facebook. Should LanguZe keep them?          | No. LanguZe never calls those providers after sign-in, so a stolen database would hand an attacker working tokens for nothing. A Better Auth database hook cleared the token fields before they were saved. Since 2026-11-06 the ASP.NET Core handlers do not save them at all, and `user_tokens` stays empty.                                                                                                                                                                                              | `auth_accounts`; Better Auth ADR          | Confirmed 2026-09-19 |
 | D4  | FR-106 forbids editing or deleting audit entries through the application. Should the database enforce it too?                       | Yes. A trigger on `admin_actions` rejects every update and delete, so not even a bug or a manual query can change the audit log. Inserts still work, and the trigger is part of the migration.                                                                                                                                                                                                                                                                                                              | `admin_actions`; migration                | Confirmed 2026-09-19 |
-| D5  | Which kind of primary key?                                                                                                          | UUID version 7 for every table, generated by Prisma, with Better Auth configured to leave ID generation to Prisma. Version 7 UUIDs are ordered by time, which keeps indexes compact, and unlike counters they reveal nothing about how many accounts or worlds exist.                                                                                                                                                                                                                                       | All tables                                | Confirmed 2026-09-19 |
+| D5  | Which kind of primary key?                                                                                                          | UUID version 7 for every table, generated by Prisma, with Better Auth configured to leave ID generation to Prisma; since 2026-11-06 by Npgsql's EF Core provider, which writes version 7 for `Guid` keys. Version 7 UUIDs are ordered by time, which keeps indexes compact, and unlike counters they reveal nothing about how many accounts or worlds exist.                                                                                                                                                | All tables                                | Confirmed 2026-09-19 |

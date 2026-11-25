@@ -2,59 +2,52 @@
 
 > **Learn from your world.**
 
-LanguZe (pronounced _แลน-กุ-เซ่_) is an AI-powered, gamified English-learning web app for Thai adults. A learner photographs a room, a desk or a street; the app finds the objects in the photo and turns them into vocabulary with Thai meanings, example sentences and a box around each object. The words become games, mistakes drive review, and an AI tutor answers questions using the learner's own words, mistakes and progress.
+LanguZe (pronounced lang-u-zay) is an AI-powered, gamified English-learning web app for Thai adults. Learners turn photos of their world into English vocabulary, play games with those words, review mistakes and ask an AI tutor questions grounded in their own progress.
 
-This repository is a curated selection from LanguZe's repository: its design documents, one complete path through the code from photo to vocabulary to game, the tests that hold it, and the way the work is done. **The full repository is private until the public opening; access is available on request.**
+The app is public at [languze.com](https://languze.com). The source repository remains private; this public overview gives a guided tour of the product, architecture and selected code.
 
 ## Status
 
-- **Release 1.0 was released on 2026-10-27** and runs in production. Until the public opening, Cloudflare Access keeps it closed to invited addresses.
-- **The API is being ported from NestJS to ASP.NET Core** ([ADR-0006](code/docs/architecture/adr/0006-aspnet-core-api.md)), one slice per pull request, with the NestJS API as the reference until cutover. Platform, authentication, accounts, worlds and photo analysis are ported; learning sessions, progress, the tutor and the admin area are next.
+- **Release 1.0 launched on 2026-10-27** and opened to the public at [languze.com](https://languze.com) on 2026-11-24.
+- **The production API has run on ASP.NET Core since 2026-11-06.** It was ported from NestJS one slice per pull request and verified with black-box contract tests before cutover. The NestJS implementation has since been removed from the private repository; its history remains in Git.
 
 ## The app
 
-![Playing a world: the boxes on a photo, a correct answer, a wrong one, an accepted variant, the summary and the tutor](screenshots/00-playing-a-world.gif)
+[Watch the 1:44 LanguZe introduction](media/Languze-introduction.mp4) (1080p MP4, 50.5 MB).
 
-Thirty seconds of a world being played, at twice the speed.
+![Current LanguZe home screen, with navigation for photo capture, worlds, review, the AI tutor and progress](screenshots/09-home-current.png)
 
-| A world from a photo                                                              | Its words                                                                                           | Identify game                                                 |
-| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| ![Boxes the AI drew around the objects in a room](screenshots/02-world-boxes.png) | ![Each word with its Thai meaning, CEFR level and example sentence](screenshots/03-world-words.png) | ![A correct answer earns XP](screenshots/04-game-correct.png) |
-
-| A wrong answer                                                                      | An accepted variant                                            | AI tutor                                                                                 |
-| ----------------------------------------------------------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| ![The right word, its meaning and the mastery level](screenshots/05-game-wrong.png) | ![tv accepted for television](screenshots/06-game-variant.png) | ![The tutor explains a mistake from the learner's own history](screenshots/08-tutor.png) |
-
-In the last picture the tutor answers "why was _carpet_ wrong for the rug?" by reading the learner's game history through a tool, not by guessing. More: the [home page](screenshots/01-home.png) and the [game summary](screenshots/07-game-summary.png). The interface is in Thai, as the learners are (NFR-013).
+The screenshot was captured from the live app on 2026-11-25. The interface is in Thai, as the learners are (NFR-013).
 
 ## Where to look
 
 A few files show most of the work. Paths are under [`code/`](code/), which keeps the original repository's layout.
 
-**Two APIs, on purpose.** [`apps/api`](code/apps/api/) is the NestJS API that runs in production. [`apps/api-dotnet`](code/apps/api-dotnet/) is its ASP.NET Core port, still in progress. They do the same thing, and the [contract suite](code/tests/api-contract/) holds them to it. Where a file has a twin, both are listed below, the NestJS one first. Read either one: the same names, rules and requirement IDs appear in both.
+**Current code.** The curated selection follows the production ASP.NET Core API and Next.js app. Read the API slices, frontend flow and contract suite to see how the product is built; the historical pull requests explain how the API port was verified. The NestJS implementation has been removed from the private repository.
 
 **Full-stack**
 
 - [`world-photo.tsx`](code/apps/web/src/components/worlds/world-photo.tsx) and [`world-words.tsx`](code/apps/web/src/components/worlds/world-words.tsx): the boxes drawn on a learner's photo and the words beside them, with their tests
 - [`create-world-form.tsx`](code/apps/web/src/components/worlds/create-world-form.tsx) and [`analysis-watcher.tsx`](code/apps/web/src/components/worlds/analysis-watcher.tsx): uploading a photo, then watching the background analysis finish
+- [Progress page](code/apps/web/src/app/progress/) and [review page](code/apps/web/src/app/review/): how mistakes lead into continued practice.
 - [`tutor-stream.ts`](code/apps/web/src/lib/api/tutor-stream.ts): the tutor's streamed reply, read as it arrives
 - [Playwright smoke tests](code/apps/web/e2e/) of worlds, the game and the tutor, run in CI against the API with the fake AI provider
 - [Accessibility review](code/docs/testing/accessibility-review.md) (WCAG 2.2 AA) and [performance review](code/docs/testing/performance-review.md): non-AI requests at p95 25 ms under a k6 load test
 
 **AI engineering**
 
-- [`gemini-ai-provider.ts`](code/apps/api/src/ai/gemini/gemini-ai-provider.ts) and its C# port [`GeminiAiProvider.cs`](code/apps/api-dotnet/LanguZe.Api/Modules/Ai/Shared/Gemini/GeminiAiProvider.cs): the only code that knows Gemini's SDK, behind a provider interface. A safety check runs before extraction, the model's refusal counts as a block, and structured output is parsed as untrusted
-- [`extraction-rules.ts`](code/apps/api/src/vocabulary/extraction-rules.ts) and [`ExtractionRules.cs`](code/apps/api-dotnet/LanguZe.Api/Modules/Vocabulary/Contracts/ExtractionRules.cs): what an extracted word has to be before it is saved
-- [`GeminiAiProviderTests.cs`](code/apps/api-dotnet/LanguZe.Api.Tests/Ai/GeminiAiProviderTests.cs): every way a call can fail, and the prompts pinned by their SHA-256, since the evaluation judged those exact words
-- [AI evaluation](code/docs/ai/evaluation.md) with its [photo](code/apps/api/evaluation/photo-cases.json) and [tutor](code/apps/api/evaluation/tutor-cases.json) cases: the first full run chose `gemini-3.5-flash-lite` with 98.8% correct words, every safety case right, and every tutor case passing three times out of three ([ADR-0004](code/docs/architecture/adr/0004-ai-provider.md))
-- [`tutor-reply.service.ts`](code/apps/api/src/tutor/tutor-reply.service.ts) and [`tutor-tools.service.ts`](code/apps/api/src/tutor/tutor-tools.service.ts): the tutor's read-only tools, so it never makes up what a learner knows
+- [GeminiAiProvider.cs](code/apps/api-dotnet/LanguZe.Api/Modules/Ai/Shared/Gemini/GeminiAiProvider.cs) is the only code that knows Gemini's SDK, behind a provider interface. A safety check runs before extraction, the model's refusal counts as a block, and structured output is parsed as untrusted.
+- [ExtractionRules.cs](code/apps/api-dotnet/LanguZe.Api/Modules/Vocabulary/Contracts/ExtractionRules.cs) defines what an extracted word must satisfy before it is saved.
+- [GeminiAiProviderTests.cs](code/apps/api-dotnet/LanguZe.Api.Tests/Ai/GeminiAiProviderTests.cs) covers provider failures and pins prompts by SHA-256.
+- [AI evaluation](code/docs/ai/evaluation.md), with photo and tutor cases in the current .NET API, records the model selection and evaluation results ([ADR-0004](code/docs/architecture/adr/0004-ai-provider.md)).
+- [SendMessageHandler.cs](code/apps/api-dotnet/LanguZe.Api/Modules/Tutor/Features/SendMessage/SendMessageHandler.cs) and [TutorTools.cs](code/apps/api-dotnet/LanguZe.Api/Modules/Tutor/Shared/TutorTools.cs) implement the tutor reply and read-only tools, grounded in the learner's history.
 
 **AI-assisted development (AI SDLC)**
 
-The code was written with Claude Code, inside a harness that makes the AI's work checkable rather than trusted:
+The work used Claude Code inside a harness that makes AI changes checkable:
 
-- [`CLAUDE.md`](code/CLAUDE.md), the [rules](code/.claude/rules/) and the [agents](code/.claude/agents/): what the AI must and must not do, such as reproducing NestJS's behaviour during the port rather than improving it
-- [`/port-slice`](code/.claude/skills/port-slice/SKILL.md): the workflow for each slice of the port, with contract tests first, against NestJS, then against .NET
+- The [rules](code/.claude/rules/) and [agents](code/.claude/agents/) define what the AI must and must not do, such as reproducing NestJS's behaviour during the port rather than improving it
+- [feature delivery workflow](code/.claude/skills/feature/SKILL.md) and [AI feature workflow](code/.claude/skills/ai-feature/SKILL.md) define repeatable steps for feature changes and AI evaluation.
 - [`settings.json`](code/.claude/settings.json) and its [hooks](code/.claude/scripts/): environment files the AI cannot read, and formatting run after every edit
 - The [pull requests](pull-requests/README.md), five from building Release 1.0 and three from the port: each has its own verification, and those from the port also say what the checks caught, including mistakes the AI made and the test that found them
 
@@ -63,12 +56,12 @@ The code was written with Claude Code, inside a harness that makes the AI's work
 - [`DependencyRules.cs`](code/apps/api-dotnet/LanguZe.Api.Tests/Architecture/DependencyRules.cs): architecture tests that fail the build when an endpoint touches the database or a module bypasses another's contracts
 - [`AnalysisWork.cs`](code/apps/api-dotnet/LanguZe.Api/Modules/Worlds/Shared/AnalysisWork.cs): one analysis, where each ending (words, a block and the pause it earns, a failure) is one transaction
 - [`StaleAnalysis.cs`](code/apps/api-dotnet/LanguZe.Api/Modules/Worlds/Jobs/StaleAnalysis.cs): releases analyses lost to a restart, reading the database only while one may be running, so the serverless database can sleep
-- [The contract suite](code/tests/api-contract/) and [`COVERAGE.md`](code/tests/api-contract/COVERAGE.md): black-box tests that run unchanged against both APIs, plus an OpenAPI comparison. A slice is done only when both pass. The port has found real NestJS bugs, each fixed there first
+- The [contract suite](code/tests/api-contract/) and [COVERAGE.md](code/tests/api-contract/COVERAGE.md) document API behavior held through the port; the current API is guarded against the committed OpenAPI contract.
 - [Integration tests](code/apps/api-dotnet/LanguZe.Api.IntegrationTests/) on throwaway databases, with a clock the test moves
 
 **Requirements and design**
 
-The [PRD](code/docs/requirements/PRD.md), the [SRS](code/docs/requirements/SRS.md) with numbered requirements that the code and tests cite, the [architecture overview](code/docs/architecture/overview.md), the [data model](code/docs/architecture/data-model.md), the [API design](code/docs/architecture/api-design.md), the [process flows](code/docs/flows/README.md) and [six ADRs](code/docs/architecture/adr/).
+The [PRD](code/docs/requirements/PRD.md), the [SRS](code/docs/requirements/SRS.md) with numbered requirements that the code and tests cite, the [architecture overview](code/docs/architecture/overview.md), the [data model](code/docs/architecture/data-model.md), the [API design](code/docs/architecture/api-design.md), the [process flows](code/docs/flows/README.md) and [seven ADRs](code/docs/architecture/adr/).
 
 ## Engineering practices
 
@@ -82,16 +75,15 @@ The [PRD](code/docs/requirements/PRD.md), the [SRS](code/docs/requirements/SRS.m
 | Area           | Technology                                                                                                 |
 | -------------- | ---------------------------------------------------------------------------------------------------------- |
 | Web            | Next.js 16 (App Router), React 19, TypeScript 6, Tailwind CSS 4, shadcn/ui, React Hook Form + Zod          |
-| API, reference | NestJS 12, Prisma 7, Better Auth, `@google/genai`, sharp                                                   |
-| API, port      | .NET 10, ASP.NET Core Minimal APIs, EF Core 10 with Npgsql, ASP.NET Core Identity, `Google.GenAI`, NetVips |
-| Data           | PostgreSQL 18, S3-compatible photo storage                                                                 |
+| API            | .NET 10, ASP.NET Core Minimal APIs, EF Core 10 with Npgsql, ASP.NET Core Identity, Google.GenAI, NetVips |
+| Data           | PostgreSQL 18 (Neon in production), S3-compatible photo storage (Cloudflare R2 in production; SeaweedFS locally)                                 |
 | AI             | Google Gemini behind a provider interface, structured output, a fake provider                              |
-| Testing        | Vitest, Supertest, Playwright, xUnit v3, ArchUnitNET, k6                                                   |
+| Testing        | Vitest, Playwright, xUnit v3, ArchUnitNET, k6                                                   |
 | Delivery       | pnpm workspace, GitHub Actions, Docker, Railway, Cloudflare, Resend                                        |
 
 ## About this selection
 
-- It is a selection, so it does not build on its own, and links in the documents to files left out point to the private repository. Deployment and operations documents are left out on purpose.
+- The code selection is synced from LanguZe main at commit eb7bb72 (2026-11-26). Pull-request notes remain historical examples. The curated selection does not build on its own.
 - [`tools/sync.mjs`](tools/sync.mjs) copies the files in [`tools/manifest.json`](tools/manifest.json) from the private repository, and only files git tracks there.
 
 ## Licence

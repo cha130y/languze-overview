@@ -1,13 +1,13 @@
 ---
 paths:
-  - "apps/api/**/*.{ts,tsx}"
+  - "apps/api-dotnet/**/*.cs"
 ---
 
 # Backend Rules
 
-- Keep controllers thin: transport concerns in controllers, business rules in services/use-cases.
-- Validate request input at the HTTP boundary using the project's DTO/validation convention.
-- Return explicit response DTOs/contracts; do not expose Prisma entities by accident.
+- Keep endpoints thin: transport concerns in endpoints, business rules in handlers and the module's Domain (ADR-0006, section 1).
+- Validate request input at the HTTP boundary using the project's request-record validation (`Platform/Validation`).
+- Return explicit response DTOs/contracts; do not expose EF Core entities by accident.
 - Keep transactions around multi-write business invariants.
 - Do not broadcast Socket.IO/domain events before the transaction establishing the event has committed.
 - Keep external providers behind adapters/services.

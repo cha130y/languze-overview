@@ -115,6 +115,23 @@ public static class Mailbox
         throw new TimeoutException($"Fewer than {count} emails to {to} arrived in Maildev.");
     }
 
+    /// <summary>Waits for an email to <paramref name="to"/> that <paramref name="match"/> picks out, for an inbox several tests share.</summary>
+    public static async Task<Email> WaitForEmailAsync(string to, Func<Email, bool> match)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (DateTime.UtcNow < deadline)
+        {
+            if ((await EmailsToAsync(to)).FirstOrDefault(match) is { } email)
+            {
+                return email;
+            }
+
+            await Task.Delay(250, TestContext.Current.CancellationToken);
+        }
+
+        throw new TimeoutException($"No matching email to {to} arrived in Maildev.");
+    }
+
     /// <summary>
     /// The emails to <paramref name="to"/> once a second has passed, time enough for one the
     /// API sent to reach Maildev: both APIs send before they answer.

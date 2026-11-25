@@ -21,8 +21,8 @@ The roadmap adds a tutor grounded in the learner's full history through retrieva
 
 ## Decision
 
-- **PostgreSQL 18 is LanguZe's only database** in Release 1.0, used through Prisma 7 with the schema and migrations in `apps/api/prisma` (ADR-0002).
-- Features that Prisma cannot express, such as check constraints, partial unique indexes, the audit-log trigger, and transaction-scoped advisory locks, are written as SQL in migrations or queries and listed in the data model.
+- **PostgreSQL 18 is LanguZe's only database** in Release 1.0, used through EF Core with Npgsql, with the entities and migrations in `apps/api-dotnet/LanguZe.Api/Data` (ADR-0002); through Prisma 7 until the cutover of 2026-11-06 (ADR-0006).
+- Features that the entities cannot express, such as check constraints, partial unique indexes, the audit-log trigger, and transaction-scoped advisory locks, are written as SQL in migrations or queries and listed in the data model.
 - **pgvector** is already available in the database image, but the extension is enabled by a migration only when the RAG tutor is built, with its own requirement and design. A separate vector database needs a new ADR that shows pgvector is not enough.
 - Redis, a job queue, or another store is added only for a need listed in section 8 of the architecture overview, with its own ADR.
 
@@ -30,5 +30,5 @@ The roadmap adds a tutor grounded in the learner's full history through retrieva
 
 - Business rules are protected by the database itself: transactions, foreign keys, unique and check constraints, and the audit trigger.
 - One database to back up, restore, and monitor. The production host must provide PostgreSQL 18 with the pgvector extension available, automated backups, and point-in-time recovery; a restore is tested before launch. The host is chosen in the deployment document.
-- Raw SQL in migrations must be reviewed with the same care as Prisma changes, and the data model must list it, because it does not appear in the Prisma schema.
+- Raw SQL in migrations must be reviewed with the same care as entity changes, and the data model must list it, because it does not appear in the entities.
 - Moving to more API instances later changes only the locking and rate-limit parts (architecture overview, section 8), not the database choice.

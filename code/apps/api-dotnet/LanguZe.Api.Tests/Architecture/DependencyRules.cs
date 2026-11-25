@@ -102,6 +102,74 @@ public sealed class DependencyRules
             .Because("every module builds on the platform, so the platform cannot lean back on one (rule R5)")
             .Check(Api);
 
+    /// <summary>
+    /// Rule R3 lets modules meet at their contracts, which still allows two to lean on each other,
+    /// directly or through others. ArchUnitNET's slices cut by whole namespace, so Auth.Shared and
+    /// Moderation.Contracts would be two slices and a cycle between modules would pass; the graph
+    /// is built here instead, one node per module, from the same dependencies the rules above read.
+    /// </summary>
+    [Fact]
+    public void R6_the_modules_depend_on_one_another_in_no_cycle()
+    {
+        var calls = Api.Types
+            .SelectMany(type => type.Dependencies.Select(dependency => (From: ModuleOf(type.Namespace?.FullName), To: ModuleOf(dependency.Target.Namespace?.FullName))))
+            .Where(call => call.From is not null && call.To is not null && call.From != call.To)
+            .Distinct()
+            .ToLookup(call => call.From!, call => call.To!);
+
+        var cycles = calls
+            .SelectMany(from => from.Select(to => PathBetween(calls, to, from.Key) is { } back ? Rotated([from.Key, .. back]) : null))
+            .OfType<string>()
+            .Distinct()
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        Assert.True(
+            cycles.Count == 0,
+            "Modules depend on one another in a cycle, so none of them could leave the monolith alone (rule R6):\n"
+            + string.Join('\n', cycles)
+            + "\nThe module that asks for something owns the interface in its Contracts, and the module that knows the answer implements it, as auth's IAccountAiAccess is implemented by moderation.");
+    }
+
+    // A generic parameter has no namespace.
+    private static string? ModuleOf(string? ns) =>
+        Regex.Match(ns ?? "", $@"^{Modules}\.([^.]+)") is { Success: true } match ? match.Groups[1].Value : null;
+
+    /// <summary>The modules from <paramref name="start"/> to <paramref name="goal"/>, goal included, or null when it cannot be reached.</summary>
+    private static List<string>? PathBetween(ILookup<string, string> calls, string start, string goal)
+    {
+        var cameFrom = new Dictionary<string, string?> { [start] = null };
+        var queue = new Queue<string>([start]);
+        while (queue.TryDequeue(out var module))
+        {
+            if (module == goal)
+            {
+                var path = new List<string>();
+                for (string? step = module; step is not null; step = cameFrom[step])
+                {
+                    path.Insert(0, step);
+                }
+
+                return path;
+            }
+
+            foreach (var next in calls[module].Where(next => cameFrom.TryAdd(next, module)))
+            {
+                queue.Enqueue(next);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>A cycle written from its first module in alphabetical order, so each is reported once.</summary>
+    private static string Rotated(List<string> cycle)
+    {
+        var loop = cycle[..^1];
+        var first = loop.IndexOf(loop.Min(StringComparer.Ordinal)!);
+        return string.Join(" -> ", [.. loop[first..], .. loop[..first], loop[first]]);
+    }
+
     [Fact]
     public void The_rules_see_the_modules()
     {

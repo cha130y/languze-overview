@@ -40,6 +40,24 @@ public sealed class LanguZeDbContext(DbContextOptions<LanguZeDbContext> options)
 
     public DbSet<PhotoBlock> PhotoBlocks => Set<PhotoBlock>();
 
+    public DbSet<PracticeSession> PracticeSessions => Set<PracticeSession>();
+
+    public DbSet<SessionQuestion> SessionQuestions => Set<SessionQuestion>();
+
+    public DbSet<Attempt> Attempts => Set<Attempt>();
+
+    public DbSet<LearnerXp> LearnerXp => Set<LearnerXp>();
+
+    public DbSet<TutorMessage> TutorMessages => Set<TutorMessage>();
+
+    public DbSet<TutorDailyUsage> TutorDailyUsage => Set<TutorDailyUsage>();
+
+    public DbSet<AdminAction> AdminActions => Set<AdminAction>();
+
+    public DbSet<ClosedAccount> ClosedAccounts => Set<ClosedAccount>();
+
+    public DbSet<TrafficEvent> TrafficEvents => Set<TrafficEvent>();
+
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         StampUpdatedAt();
@@ -180,18 +198,26 @@ public sealed class LanguZeDbContext(DbContextOptions<LanguZeDbContext> options)
             word.ToTable("vocabulary_words");
             word.Property(w => w.English).HasMaxLength(40);
             word.Property(w => w.ThaiMeaning).HasMaxLength(100);
-            word.Property(w => w.ThaiMeaningKey).HasMaxLength(100);
             word.Property(w => w.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
-            word.HasIndex(w => new { w.LearnerId, w.English, w.ThaiMeaningKey }).IsUnique();
+            word.HasIndex(w => new { w.LearnerId, w.English }).IsUnique();
             word.HasOne<User>().WithMany().HasForeignKey(w => w.LearnerId).OnDelete(DeleteBehavior.Cascade);
             word.HasOne(w => w.Mastery).WithOne().HasForeignKey<WordMastery>(m => m.VocabularyWordId).OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<WordOccurrence>(occurrence =>
         {
-            occurrence.ToTable("word_occurrences", table => table.HasCheckConstraint(
-                "word_occurrences_box_inside_photo",
-                "\"box_x\" >= 0 AND \"box_y\" >= 0 AND \"box_width\" > 0 AND \"box_height\" > 0 AND \"box_x\" + \"box_width\" <= 1 AND \"box_y\" + \"box_height\" <= 1"));
+            occurrence.ToTable("word_occurrences", table =>
+            {
+                table.HasCheckConstraint(
+                    "word_occurrences_box_inside_photo",
+                    "\"box_x\" >= 0 AND \"box_y\" >= 0 AND \"box_width\" > 0 AND \"box_height\" > 0 AND \"box_x\" + \"box_width\" <= 1 AND \"box_y\" + \"box_height\" <= 1");
+                // #73: an arrow is whole or absent, and inside the photo.
+                table.HasCheckConstraint(
+                    "word_occurrences_arrow_inside_photo",
+                    "(\"point_x\" IS NULL AND \"point_y\" IS NULL AND \"tail_x\" IS NULL AND \"tail_y\" IS NULL AND \"point_source\" IS NULL)"
+                    + " OR (\"point_x\" BETWEEN 0 AND 1 AND \"point_y\" BETWEEN 0 AND 1 AND \"tail_x\" BETWEEN 0 AND 1 AND \"tail_y\" BETWEEN 0 AND 1 AND \"point_source\" IS NOT NULL)");
+            });
+            occurrence.Property(o => o.ThaiMeaning).HasMaxLength(100);
             occurrence.Property(o => o.ExampleSentence).HasMaxLength(200);
             occurrence.Property(o => o.AcceptedVariants).HasColumnType("varchar(40)[]");
             occurrence.Property(o => o.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
@@ -226,6 +252,122 @@ public sealed class LanguZeDbContext(DbContextOptions<LanguZeDbContext> options)
             block.Property(b => b.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             block.HasIndex(b => new { b.LearnerId, b.CreatedAt });
             block.HasOne<User>().WithMany().HasForeignKey(b => b.LearnerId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<PracticeSession>(session =>
+        {
+            session.ToTable("practice_sessions");
+            session.Property(s => s.Status).HasDefaultValue(SessionStatus.InProgress);
+            session.Property(s => s.StartedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            session.HasIndex(s => new { s.LearnerId, s.StartedAt });
+            session.HasOne<User>().WithMany().HasForeignKey(s => s.LearnerId).OnDelete(DeleteBehavior.Cascade);
+            session.HasMany(s => s.Questions).WithOne(q => q.Session).HasForeignKey(q => q.SessionId).OnDelete(DeleteBehavior.Cascade);
+
+            // At most one unfinished game per world and one unfinished review (FR-036): what
+            // makes two sessions impossible when two starts race.
+            session.HasIndex(s => new { s.LearnerId, s.WorldId }, "practice_sessions_one_open_game")
+                .IsUnique()
+                .HasFilter("\"status\" = 'IN_PROGRESS' AND \"kind\" = 'GAME'");
+            session.HasIndex(s => s.LearnerId, "practice_sessions_one_open_review")
+                .IsUnique()
+                .HasFilter("\"status\" = 'IN_PROGRESS' AND \"kind\" = 'REVIEW'");
+
+            // world_id has its foreign key in the database (to worlds, ON DELETE SET NULL) but
+            // not here: EF indexes every foreign key it knows, and would describe an index on
+            // world_id that Prisma never made.
+        });
+
+        builder.Entity<SessionQuestion>(question =>
+        {
+            question.ToTable("session_questions", table => table.HasCheckConstraint("session_questions_position_starts_at_one", "\"position\" >= 1"));
+            question.HasIndex(q => new { q.SessionId, q.Position }).IsUnique();
+            question.HasOne(q => q.Attempt).WithOne().HasForeignKey<Attempt>(a => a.QuestionId).OnDelete(DeleteBehavior.SetNull);
+
+            // vocabulary_word_id and occurrence_id have their foreign keys in the database (ON
+            // DELETE SET NULL) but not here, for the same reason as world_id above.
+        });
+
+        builder.Entity<Attempt>(attempt =>
+        {
+            attempt.ToTable("attempts", table =>
+            {
+                table.HasCheckConstraint("attempts_dont_know_is_blank_and_wrong", "NOT \"is_dont_know\" OR (\"answer_text\" IS NULL AND NOT \"is_correct\")");
+                table.HasCheckConstraint("attempts_wrong_answers_earn_nothing", "\"xp_awarded\" >= 0 AND (\"is_correct\" OR \"xp_awarded\" = 0)");
+            });
+            attempt.Property(a => a.AnswerText).HasMaxLength(100);
+            attempt.Property(a => a.IsDontKnow).HasDefaultValue(false);
+            attempt.Property(a => a.XpAwarded).HasDefaultValue((short)0);
+            attempt.Property(a => a.AnsweredAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            attempt.HasIndex(a => a.QuestionId).IsUnique();
+            attempt.HasIndex(a => new { a.LearnerId, a.AnsweredAt });
+            attempt.HasIndex(a => new { a.VocabularyWordId, a.AnsweredAt });
+            attempt.HasOne<User>().WithMany().HasForeignKey(a => a.LearnerId).OnDelete(DeleteBehavior.Cascade);
+            attempt.HasOne<VocabularyWord>().WithMany().HasForeignKey(a => a.VocabularyWordId).OnDelete(DeleteBehavior.Cascade);
+
+            // session_id and occurrence_id have their foreign keys in the database (ON DELETE
+            // SET NULL) but not here, for the same reason as world_id above.
+        });
+
+        builder.Entity<LearnerXp>(xp =>
+        {
+            xp.ToTable("learner_xp", table => table.HasCheckConstraint("learner_xp_not_negative", "\"total_xp\" >= 0"));
+            xp.HasKey(x => x.LearnerId);
+            xp.Property(x => x.TotalXp).HasDefaultValue(0);
+            xp.HasOne<User>().WithOne().HasForeignKey<LearnerXp>(x => x.LearnerId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<TutorMessage>(message =>
+        {
+            message.ToTable("tutor_messages", table => table.HasCheckConstraint(
+                "tutor_messages_learner_message_length",
+                "length(\"content\") > 0 AND (\"role\" <> 'LEARNER' OR length(\"content\") <= 1000)"));
+            message.Property(m => m.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            message.HasIndex(m => new { m.LearnerId, m.CreatedAt });
+            message.HasOne<User>().WithMany().HasForeignKey(m => m.LearnerId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<TutorDailyUsage>(usage =>
+        {
+            usage.ToTable("tutor_daily_usage", table => table.HasCheckConstraint("tutor_daily_usage_not_negative", "\"messages_used\" >= 0"));
+            usage.HasKey(u => new { u.LearnerId, u.Day });
+            usage.Property(u => u.MessagesUsed).HasDefaultValue((short)0);
+            usage.HasOne<User>().WithMany().HasForeignKey(u => u.LearnerId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<TrafficEvent>(traffic =>
+        {
+            traffic.ToTable("traffic_events");
+            traffic.Property(t => t.Via).HasMaxLength(20);
+            traffic.HasIndex(t => t.OccurredAt);
+            traffic.HasIndex(t => t.AccountId);
+
+            // No foreign key: an event outlives the account (FR-110). The triggers that keep each
+            // event unchanged for 90 days are in the AddTrafficEvents migration.
+        });
+
+        builder.Entity<ClosedAccount>(closed =>
+        {
+            closed.ToTable("closed_accounts");
+            closed.HasKey(c => c.AccountId);
+            closed.Property(c => c.Email).HasMaxLength(254);
+            closed.Property(c => c.ProviderAccounts).HasColumnType("varchar(300)[]");
+            closed.HasIndex(c => c.ClosedAt);
+
+            // No foreign key: the record outlives the account (FR-111). The triggers that keep
+            // each record unchanged for 90 days are in the AddClosedAccounts migration.
+        });
+
+        builder.Entity<AdminAction>(action =>
+        {
+            action.ToTable("admin_actions", table => table.HasCheckConstraint("admin_actions_reason_length", "length(btrim(\"reason\")) > 0"));
+            action.Property(a => a.Reason).HasMaxLength(500);
+            action.Property(a => a.Details).HasColumnType("jsonb");
+            action.Property(a => a.CreatedAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
+            action.HasIndex(a => a.LearnerId);
+            action.HasIndex(a => a.CreatedAt);
+
+            // No foreign keys: an entry outlives the learner's account (FR-106). The triggers that
+            // refuse every change to an entry are Prisma's, and EF Core has no word for them (D4).
         });
 
         SchemaNames.Apply(builder);

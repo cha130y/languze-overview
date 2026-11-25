@@ -1,5 +1,7 @@
 using LanguZe.Api.Data.Entities;
+using LanguZe.Api.Modules.Ai.Shared;
 using LanguZe.Api.Modules.Worlds.Jobs;
+using LanguZe.Api.Modules.Worlds.Shared;
 using Microsoft.EntityFrameworkCore;
 
 namespace LanguZe.Api.IntegrationTests;
@@ -11,6 +13,41 @@ namespace LanguZe.Api.IntegrationTests;
 /// </summary>
 public sealed class StaleAnalysisTests
 {
+    [Theory]
+    [InlineData("ALLOWED")]
+    [InlineData("BLOCKED")]
+    [InlineData("PROVIDER_ERROR")]
+    public async Task A_timed_out_analysis_ignores_a_late_provider_result(string behaviour)
+    {
+        await using var api = await ApiHost.StartAsync();
+        using var browser = await Learners.VerifiedAsync(api, "late-result@example.com");
+        var provider = api.Service<FakeAiProvider>();
+        provider.Behaviour = behaviour;
+        provider.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var response = await Learners.PostWorldAsync(browser, Learners.Photo(800, 600));
+        var worldId = Guid.Parse((await ApiHost.BodyAsync(response)).GetProperty("id").GetString()!);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (provider.Holding == 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(25, TestContext.Current.CancellationToken);
+        }
+        Assert.True(provider.Holding > 0);
+
+        api.Clock.Advance(TimeSpan.FromMinutes(6));
+        Assert.Equal(1, await api.Service<StaleAnalysis>().ReleaseAsync(api.Clock.GetUtcNow(), TestContext.Current.CancellationToken));
+        provider.Hold.SetResult();
+        await api.Service<AnalysisRunner>().SettledAsync(worldId);
+
+        await using var db = api.Database.Context();
+        var analysis = await db.Analyses.SingleAsync(row => row.WorldId == worldId, TestContext.Current.CancellationToken);
+        var world = await db.Worlds.SingleAsync(row => row.Id == worldId, TestContext.Current.CancellationToken);
+        Assert.Equal((AnalysisStatus.Failed, AnalysisFailure.TimedOut), (analysis.Status, analysis.FailureReason));
+        Assert.Equal((WorldStatus.Failed, AnalysisFailure.TimedOut), (world.Status, world.FailureReason));
+        Assert.False(await db.WordOccurrences.AnyAsync(row => row.WorldId == worldId, TestContext.Current.CancellationToken));
+        Assert.False(await db.PhotoBlocks.AnyAsync(TestContext.Current.CancellationToken));
+    }
+
     [Fact]
     public async Task An_analysis_older_than_five_minutes_is_released_with_its_world()
     {

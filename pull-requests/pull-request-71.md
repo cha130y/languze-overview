@@ -25,5 +25,3 @@ Every test uses the fake provider, and the adapter's tests faked chunks with onl
 - Mutation: both new tests fail against the old code (turn rebuilt without the signature; thoughts shown)
 - Real Gemini (`gemini-flash-lite-latest`): the question that failed with 400 is answered from the tool's data. The full tutor evaluation went from 3/12 to 11/12 cases
 - e2e not run: the API e2e tests use the fake provider, which this does not touch
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)

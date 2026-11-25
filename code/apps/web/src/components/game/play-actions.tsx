@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { api, type PracticeSession } from '@/lib/api/client';
 import { messageForError } from '@/lib/api/error-messages';
+import { playSceneSound } from '@/lib/scene-sounds';
 
 /** The same job in two voices: getting into a game, or into a review. */
 const WORDS = {
@@ -24,6 +25,14 @@ const WORDS = {
       'การเริ่มทบทวนใหม่จะปิดรอบที่ค้างอยู่ และคำตอบที่ตอบไปแล้วจะยังถูกบันทึกไว้',
   },
 } as const;
+
+function playReviewStartSound() {
+  playSceneSound(
+    'review-start',
+    '/scenes/sounds/e2-review-start.c98e9dc8.wav',
+    0.3,
+  );
+}
 
 /**
  * Getting into a session (US-030, US-034, US-050).
@@ -53,6 +62,7 @@ export function PlayActions({
   const start = async () => {
     setStarting(true);
     setError(null);
+    if (kind === 'REVIEW') playReviewStartSound();
     try {
       const session =
         kind === 'REVIEW'
@@ -72,7 +82,11 @@ export function PlayActions({
         {openSession ? (
           <Link
             href={`/sessions/${openSession.id}`}
+            data-play-primary
             className={`${buttonVariants({ variant: 'cta', size: 'xl' })} sm:flex-1`}
+            onClick={() => {
+              if (kind === 'REVIEW') playReviewStartSound();
+            }}
           >
             เล่นต่อ (ข้อ {openSession.answeredCount + 1} จาก{' '}
             {openSession.questionCount})
@@ -85,6 +99,8 @@ export function PlayActions({
           size="xl"
           className="sm:flex-1"
           disabled={starting}
+          // The main action, which a scene's object may stand for (Scene E2's orrery).
+          data-play-primary={openSession ? undefined : true}
           onClick={() => void start()}
         >
           {starting ? words.starting : openSession ? words.again : words.start}

@@ -43,11 +43,12 @@ sequenceDiagram
 
 Tools only read data, and they always act for the signed-in learner: none of them accepts a learner identifier from the model (FR-072). Each tool is built already bound to the learner, so whose data is read is settled before the model sees a tool.
 
-| Tool              | Input                 | Returns                                                                                 |
-| ----------------- | --------------------- | --------------------------------------------------------------------------------------- |
-| `weak_words`      | How many (at most 20) | English word, Thai meaning, mastery level, number of mistakes, when last practised      |
-| `recent_mistakes` | How many (at most 20) | English word, Thai meaning, what the learner typed (or "I don’t know"), when            |
-| `word_details`    | An English word       | Thai meaning, example sentence, CEFR level, mastery level, the learner’s recent answers |
+| Tool              | Input                 | Returns                                                                                                  |
+| ----------------- | --------------------- | -------------------------------------------------------------------------------------------------------- |
+| `weak_words`      | How many (at most 20) | English word, Thai meaning, mastery level, number of mistakes, when last practised                       |
+| `latest_game`     | None                  | Whether the learner has completed a game and the recorded mistakes from the most recently completed game |
+| `recent_mistakes` | How many (at most 20) | English word, Thai meaning, what the learner typed (or "I don’t know"), when                             |
+| `word_details`    | An English word       | Thai meaning, example sentence, CEFR level, mastery level, the learner’s recent answers                  |
 
 - Tool input from the model is validated like any external input; an unknown tool or invalid input returns an error to the model, not data. A count that makes no sense becomes the default rather than an error: the model guessing badly at a number is not a reason to refuse the learner an answer.
 - A word the learner does not have is reported as not found, with a reason. Saying so is what stops the tutor inventing a history for it (FR-075).

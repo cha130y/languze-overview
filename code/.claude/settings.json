@@ -26,20 +26,17 @@
       "Bash(pnpm lint*)",
       "Bash(pnpm typecheck*)",
       "Bash(pnpm build*)",
-      "Bash(pnpm exec prisma validate*)",
-      "Bash(pnpm exec prisma generate*)",
       "Bash(gh pr list*)",
       "Bash(dotnet restore*)",
-"Bash(dotnet build*)",
-"Bash(dotnet test*)",
-"Bash(dotnet format*)"
-
+      "Bash(dotnet build*)",
+      "Bash(dotnet test*)",
+      "Bash(dotnet format*)"
     ]
   },
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "compact",
+        "matcher": "startup|resume|clear|compact",
         "hooks": [
           {
             "type": "command",
@@ -56,6 +53,17 @@
             "type": "command",
             "command": "node .claude/scripts/format-dotnet.mjs",
             "timeout": 60
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/scripts/record-activity.mjs claude",
+            "timeout": 30
           }
         ]
       }

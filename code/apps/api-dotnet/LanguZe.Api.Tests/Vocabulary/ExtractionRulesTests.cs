@@ -20,9 +20,19 @@ public sealed class ExtractionRulesTests
     public void An_answer_is_normalized_as_srs_4_2_says(string given, string expected) =>
         Assert.Equal(expected, ExtractionRules.NormalizeAnswer(given));
 
+    // AIR-004: one photo that names one English word twice keeps the first item, meaning and all.
     [Fact]
-    public void A_thai_meaning_key_ignores_spacing_so_one_meaning_is_one_word() =>
-        Assert.Equal("โซฟา ยาว", ExtractionRules.ThaiMeaningKeyOf("  โซฟา   ยาว "));
+    public void Within_a_photo_one_english_word_keeps_its_first_meaning_and_box()
+    {
+        var items = ExtractionRules.CheckedItems(
+        [
+            new("pot", "กระถาง", "The pot has a plant.", "A1", [], new(0.1, 0.1, 0.2, 0.2)),
+            new("pot", "หม้อ", "The pot is hot.", "A1", [], new(0.5, 0.5, 0.2, 0.2)),
+            new("sofa", "โซฟา", "The sofa is soft.", "A1", [], new(0.3, 0.6, 0.2, 0.2)),
+        ]);
+
+        Assert.Equal(["pot|กระถาง|0.1", "sofa|โซฟา|0.3"], items.Select(item => $"{item.English}|{item.ThaiMeaning}|{item.Box.X}"));
+    }
 
     [Fact]
     public void A_good_item_is_kept_normalized()
@@ -31,7 +41,7 @@ public sealed class ExtractionRulesTests
 
         Assert.NotNull(checkedItem);
         Assert.Equal("sofa", checkedItem.English);
-        Assert.Equal("โซฟา", checkedItem.ThaiMeaningKey);
+        Assert.Equal("โซฟา", checkedItem.ThaiMeaning);
         Assert.Equal(CefrLevel.A1, checkedItem.CefrLevel);
     }
 
@@ -108,6 +118,21 @@ public sealed class ExtractionRulesTests
     public void A_box_outside_the_photo_or_without_a_size_is_refused(double x, double y, double width, double height) =>
         Assert.Null(ExtractionRules.CheckItem(Item(box: new WordBox(x, y, width, height))));
 
+    // #73: a point marks the object only from inside its own box; outside it, the word keeps its box alone.
+    [Theory]
+    [InlineData(0.25, 0.3, true)]
+    [InlineData(0.1, 0.2, true)]
+    [InlineData(0.45, 0.3, false)]
+    [InlineData(0.25, 0.5, false)]
+    [InlineData(double.NaN, 0.3, false)]
+    public void A_point_is_kept_only_inside_its_box_and_never_costs_the_word(double x, double y, bool kept)
+    {
+        var item = ExtractionRules.CheckItem(Item() with { Point = new WordPoint(x, y) });
+
+        Assert.NotNull(item);
+        Assert.Equal(kept, item.Point is not null);
+    }
+
     [Fact]
     public void A_box_filling_the_whole_photo_is_accepted() =>
         Assert.NotNull(ExtractionRules.CheckItem(Item(box: new WordBox(0, 0, 1, 1))));
@@ -151,13 +176,6 @@ public sealed class ExtractionRulesTests
 
         Assert.Equal(0.1, Assert.Single(kept).Box.X);
     }
-
-    [Fact]
-    public void The_same_word_with_another_meaning_is_a_word_of_its_own() =>
-        Assert.Equal(2, ExtractionRules.CheckedItems([
-            Item(english: "glass", thaiMeaning: "แก้วน้ำ", exampleSentence: "The glass is full."),
-            Item(english: "glass", thaiMeaning: "กระจก", exampleSentence: "The glass is clean."),
-        ]).Count);
 
     [Fact]
     public void At_most_twelve_words_are_kept()

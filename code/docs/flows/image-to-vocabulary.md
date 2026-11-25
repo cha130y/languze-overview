@@ -73,7 +73,7 @@ sequenceDiagram
 - A blocked photo is deleted from storage right after the transaction commits (step 4 after step 3). If deletion fails, the cleanup record keeps it on the retry list.
 - The safety check and the extraction are two separate AI calls, safety first ([ADR-0004](../architecture/adr/0004-ai-provider.md)).
 - If the world was deleted while the analysis ran, the result is discarded at the save step.
-- **5-minute rule (V16):** when the API starts, and every minute afterwards, it marks analyses that have been `IN_PROGRESS` for more than 5 minutes as `FAILED` (released) and their worlds as `FAILED`. This catches analyses lost when the API restarts **(P2)**. The minute check reads the database only from the start of an analysis until a minute past its 5-minute mark, and for 6 minutes after the API starts; otherwise there is nothing to release, and reading anyway would keep Neon's compute from suspending ([production deployment, section 10](../deployment/production.md#10-cost)).
+- **5-minute rule (V16):** when the API starts, and every minute afterwards, it marks analyses that have been `IN_PROGRESS` for more than 5 minutes as `FAILED` (released) and their worlds as `FAILED`. A result or error arriving after that transition cannot change the analysis or world again. This catches analyses lost when the API restarts **(P2)**. The minute check reads the database only from the start of an analysis until a minute past its 5-minute mark, and for 6 minutes after the API starts; otherwise there is nothing to release, and reading anyway would keep Neon's compute from suspending (production deployment, section 10).
 
 ## 3. Validation and post-processing
 
@@ -96,7 +96,7 @@ flowchart TD
   K -- yes --> OK["Save the words, world READY"]
 ```
 
-- Item rules (AIR-003): an English word of letters, spaces, or hyphens (1–40 characters); a Thai meaning containing Thai script; an example sentence containing the word, a regular plural of it, or a variant; a CEFR level from A1 to C2; a highlight box inside the image with a non-zero area; accepted variants unique after normalization.
+- Item rules (AIR-003): an English word of letters, spaces, or hyphens (1–40 characters); a Thai meaning containing Thai script; an example sentence containing the word, a regular plural of it, or a variant; a CEFR level from A1 to C2; a highlight box inside the image with a non-zero area; accepted variants unique after normalization. An optional point outside its own box is discarded without discarding the item (#73).
 - People and body parts are filtered twice: the model is instructed not to return them, and a fixed list of people and body-part words removes any that slip through (FR-094, AIR-009).
 - To keep "the clearest objects", the output schema includes a prominence value for each item; the AI design defines it.
 
@@ -156,8 +156,8 @@ Removing a word follows steps 2–4 for one occurrence, without the photo. Total
 ## 7. Points for the data model and API design
 
 - Each analysis is its own record with a start time and an outcome (`IN_PROGRESS`, `SUCCEEDED`, `BLOCKED`, `FAILED`). The daily count is the number of analyses started today (`Asia/Bangkok`) that are `IN_PROGRESS`, `SUCCEEDED`, or `BLOCKED`, so "releasing" an analysis just means it ends as `FAILED`.
-- A vocabulary word belongs to the learner and is identified by its normalized English word and Thai meaning (FR-043); occurrences link it to a world with the highlight box, example sentence, CEFR level, and accepted variants.
-- Highlight boxes are stored relative to the prepared photo (0–1), which is the photo the learner sees.
+- A vocabulary word belongs to the learner and is identified by its normalized English word (FR-043); occurrences link it to a world with the Thai meaning that photo gave, the highlight box, optional arrow point and tail, example sentence, CEFR level, and accepted variants. The word keeps the Thai meaning of its first occurrence.
+- Highlight boxes and arrow coordinates are stored relative to the prepared photo (0–1), which is the photo the learner sees.
 - Attempts and mistakes must keep their link to the vocabulary word when an occurrence or world is deleted, because a word still in another world keeps its mistake history (FR-015). Their link to the deleted occurrence is cleared, not cascaded.
 - Total XP is stored on the learner and only increases; it is not recalculated from attempts, which can be deleted (V4).
 - The API returns the photo as a short-lived signed link, never as a public address **(P4)**.

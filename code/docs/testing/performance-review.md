@@ -2,19 +2,19 @@
 
 - **Status:** NFR-002 met (2026-10-08). NFR-003 met in production (2026-10-23, section 2). NFR-001 to be measured in production once learners have made worlds (section 3)
 - **Requirements:** [NFR-001, NFR-002, NFR-003](../requirements/SRS.md), with the expected load V22
-- **Used by:** [launch checklist, section 5](../deployment/launch-checklist.md#5-reviews)
+- **Used by:** launch checklist, section 5
 
 ## Summary
 
-| Requirement                                                                                          | Result                                                                                                       | How                                  |
-| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
-| **NFR-002** Non-AI requests, p95 ≤ 500 ms with 25 learners at once, about 10 requests a second (V22) | **Met**: p95 25 ms over 1,909 requests at 9.1 a second, no failures; the slowest endpoint 75 ms              | k6 load test, section 1              |
-| **NFR-003** The tutor's reply starts within 10 s at p95                                              | **Met in production**: whole replies p95 2.0 s over 21, so the first piece sooner still                      | `ai_calls` in production (section 2) |
-| **NFR-001** From a finished upload to `READY`, p95 ≤ 20 s                                            | **Expected to hold**: the safety check and extraction take p95 6.9 s together. To be confirmed in production | Section 3                            |
+| Requirement                                                                                          | Result                                                                                                                                                                             | How                                  |
+| ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| **NFR-002** Non-AI requests, p95 ≤ 500 ms with 25 learners at once, about 10 requests a second (V22) | **Met**: p95 25 ms over 1,909 requests at 9.1 a second, no failures; the slowest endpoint 75 ms. Through the ASP.NET Core API (2026-11-06): p95 37 ms, the slowest endpoint 101 ms | k6 load test, section 1              |
+| **NFR-003** The tutor's reply starts within 10 s at p95                                              | **Met in production**: whole replies p95 2.0 s over 21, so the first piece sooner still                                                                                            | `ai_calls` in production (section 2) |
+| **NFR-001** From a finished upload to `READY`, p95 ≤ 20 s                                            | **Expected to hold**: the safety check and extraction take p95 6.9 s together. To be confirmed in production                                                                       | Section 3                            |
 
 ## 1. NFR-002: the load test
 
-**What it does.** [`apps/api/load/learners.js`](../../apps/api/load/learners.js) runs in [k6](https://grafana.com/docs/k6/latest/). Each virtual user is one learner, signed in once with the password, who then plays rounds:
+**What it does.** `tests/load/learners.js` runs in [k6](https://grafana.com/docs/k6/latest/); it lived in `apps/api/load` with the NestJS API until 2026-11-06. Each virtual user is one learner, signed in once with the password, who then plays rounds:
 
 1. their account and their worlds
 2. one world, and starting a game in it
@@ -28,7 +28,7 @@ Between requests the learner pauses 1.5 to 3.5 seconds. With 25 learners that co
 - every endpoint answers within 500 ms at the 95th percentile, both on its own and across all of them
 - fewer than 1% of the requests fail
 
-**Sign-in is measured but not held to 500 ms.** It checks a scrypt hash, which is slow on purpose.
+**Sign-in is measured but not held to 500 ms.** It checks a password hash, which is slow on purpose: Better Auth's scrypt in the NestJS API, Identity's own in the ASP.NET Core one.
 
 ### Results (2026-10-08)
 
@@ -52,6 +52,26 @@ Totals: 1,909 requests in 3 minutes, 9.1 a second, none failed.
 
 **Headroom.** The same test with 50 learners for 2 minutes (17.8 requests a second, twice V22) gave the same p95 of 26 ms, with no failures. `GET /v1/me` rose to a p95 of 107 ms. It is each learner's first request after signing in, so most likely it waits behind the scrypt work of everyone signing in together.
 
+### Results through the ASP.NET Core API (2026-11-06)
+
+After the cutover, the same script, unchanged but for its header, against the ASP.NET Core API built in Release on the developer's machine, with PostgreSQL 18 in Docker and k6 from its Docker image; the learners came from `load-seed`, the port of `load:seed`.
+
+| Endpoint                               | p95 (NestJS, 2026-10-08) | p95 (ASP.NET Core) |
+| -------------------------------------- | ------------------------ | ------------------ |
+| `GET /v1/me`                           | 75 ms                    | 101 ms             |
+| `GET /v1/worlds`                       | 19 ms                    | 38 ms              |
+| `GET /v1/worlds/:id`                   | 20 ms                    | 19 ms              |
+| `POST /v1/sessions` (start a game)     | 30 ms                    | 47 ms              |
+| `POST …/answer`                        | 25 ms                    | 37 ms              |
+| `GET /v1/sessions/:id`                 | 19 ms                    | 21 ms              |
+| `GET /v1/progress`                     | 17 ms                    | 22 ms              |
+| `GET /v1/sessions/current?kind=REVIEW` | 17 ms                    | 20 ms              |
+| **All of the above**                   | **25 ms**                | **37 ms**          |
+
+Totals: 1,933 requests in 3 minutes, 9.2 a second, none failed, and every threshold passed: **NFR-002 is met**, with the slowest endpoint at a fifth of its limit. Every request together, sign-in included, ran at a median of 17 ms and a p95 of 39 ms; the slowest, 1.96 s, was most likely one of the 25 sign-ins that started in the same second. `GET /v1/me` is again the slowest playing endpoint, for the same reason as before: it is each learner's first request after signing in.
+
+The ASP.NET Core figures run a few milliseconds above the NestJS ones on most endpoints. One run on a developer's machine does not separate the API from the machine's load that day, and both sit far inside the limit, so the difference was not pursued.
+
 **What this does not measure.**
 
 - **The network.** Production adds the round trip between Thailand and Singapore and Neon's latency.
@@ -65,28 +85,27 @@ You need k6, either installed (`winget install k6 --source winget`) or through D
 
 1. **Seed the learners.**
    ```bash
-   pnpm --filter @languze/api load:seed
+   dotnet run --project apps/api-dotnet/LanguZe.Tools -- load-seed
    ```
-   This creates 25 verified learners, `learner-01@load.example.com` and on, each with a ready world of eight words. It writes only to a database on this machine.
-2. **Start the API as the production build.** Use another port, so that `pnpm dev` can stay on 4001. Trust one proxy hop, so that each learner's `X-Forwarded-For` counts as its own address:
+   This creates 25 verified learners, `learner-01@load.example.com` and on, each with a ready world of eight words, in `languze_dotnet` unless `DATABASE_URL` names another database. It writes only to a database on this machine.
+2. **Start the API built in Release.** Use another port, so that `pnpm dev` can stay on 4001. Trust one proxy hop, so that each learner's `X-Forwarded-For` counts as its own address, and leave the Gemini key empty, so a developer's user secret cannot reach Gemini:
    ```bash
-   pnpm --filter @languze/api build
-   cd apps/api
-   PORT=4011 WEB_ORIGIN=http://localhost:3003 AUTH_URL=http://localhost:4011 COOKIE_DOMAIN= TRUST_PROXY_HOPS=1 GEMINI_API_KEY= node --env-file-if-exists=.env dist/main.js
+   dotnet build apps/api-dotnet/LanguZe.Api -c Release
+   ASPNETCORE_ENVIRONMENT=Development PORT=4011 AUTH_URL=http://localhost:4011 TRUST_PROXY_HOPS=1 GEMINI_API_KEY= dotnet run -c Release --no-build --project apps/api-dotnet/LanguZe.Api --no-launch-profile
    ```
 3. **Run k6.**
    - Installed:
      ```bash
-     k6 run -e API_URL=http://localhost:4011 apps/api/load/learners.js
+     k6 run -e API_URL=http://localhost:4011 tests/load/learners.js
      ```
    - Through Docker, from the repository root (in Git Bash on Windows, put `MSYS_NO_PATHCONV=1` before `docker`, or the paths are rewritten):
      ```bash
-     docker run --rm -v "$PWD/apps/api/load:/scripts" grafana/k6 run -e API_URL=http://host.docker.internal:4011 /scripts/learners.js
+     docker run --rm --add-host=host.docker.internal:host-gateway -v "$PWD/tests/load:/scripts:ro" grafana/k6 run -e API_URL=http://host.docker.internal:4011 /scripts/learners.js
      ```
-   - `-e LEARNERS=50 -e DURATION=2m` changes the load; seed as many learners first, with `load:seed -- --learners 50`.
+   - `-e LEARNERS=50 -e DURATION=2m` changes the load; seed as many learners first, with `load-seed --learners 50`.
 4. **Remove the learners.**
    ```bash
-   pnpm --filter @languze/api load:seed -- --clean
+   dotnet run --project apps/api-dotnet/LanguZe.Tools -- load-seed --clean
    ```
 
 Run it again before a release that changes a query, an endpoint the journey uses, or the database.

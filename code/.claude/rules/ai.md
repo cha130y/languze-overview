@@ -1,7 +1,8 @@
 ---
 paths:
-  - "apps/api/**/*ai*/**/*.{ts,tsx}"
-  - "apps/api/**/*tutor*/**/*.{ts,tsx}"
+  - "apps/api-dotnet/LanguZe.Api/Modules/Ai/**/*.cs"
+  - "apps/api-dotnet/LanguZe.Api/Modules/Tutor/**/*.cs"
+  - "apps/api-dotnet/LanguZe.Tools/Evaluation/**/*.cs"
   - "packages/ai/**/*.{ts,tsx}"
   - "docs/ai/**/*.md"
 ---

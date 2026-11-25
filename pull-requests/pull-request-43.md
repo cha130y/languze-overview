@@ -38,5 +38,3 @@ Headless Chrome, three runs against the fake provider. The startup log confirmed
 `lint`, `typecheck`, `format:check` and `build` pass. **185 API** unit tests (2 new), **93 web** (35 new), **119 e2e** unchanged. Four mutations — the last-word rule, the box arithmetic, the refresh trigger, the limit gate — each broke exactly the test meant to catch it.
 
 **Not verified:** these pages on a real phone, which is still the carried-over NFR-018 check. And no real Gemini output has ever driven these boxes, so whether real coordinates land on real objects remains unproven until someone runs it with a key.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)

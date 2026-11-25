@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, test, vi } from 'vitest';
 import { ApiError, api, type TutorMessage, type Usage } from '@/lib/api/client';
 import { sendTutorMessage } from '@/lib/api/tutor-stream';
 import type { TutorStreamEvent } from '@/lib/api/tutor-stream';
+import { TUTOR_REPLY_EVENT } from '@/components/scene/tutor-scene';
 import { TutorChat } from './tutor-chat';
 
 vi.mock('@/lib/api/client', async (importOriginal) => ({
@@ -61,18 +62,26 @@ const show = (
   );
 
 /** jsdom has no layout, so what the page scrolls to is recorded instead. */
-const scrolledTo: Element[] = [];
+/* Where the conversation was scrolled to: jsdom has no layout, so it is recorded. */
+const scrolled: { element: Element; top: number }[] = [];
 
 const box = () => screen.getByLabelText('ข้อความถึงติวเตอร์');
 const sendButton = () => screen.getByRole('button', { name: 'ส่ง' });
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // jsdom has no layout, so this is never meaningful here.
-  scrolledTo.length = 0;
-  Element.prototype.scrollIntoView = function scrollIntoView(this: Element) {
-    scrolledTo.push(this);
-  };
+  scrolled.length = 0;
+  Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+    configurable: true,
+    get: () => 500,
+  });
+  Object.defineProperty(HTMLElement.prototype, 'scrollTop', {
+    configurable: true,
+    get: () => 0,
+    set(this: HTMLElement, top: number) {
+      scrolled.push({ element: this, top });
+    },
+  });
 });
 
 describe('what is already there (US-070 criterion 4)', () => {
@@ -115,6 +124,24 @@ describe('what is already there (US-070 criterion 4)', () => {
     ).toBeInTheDocument();
   });
 
+  /* Reading back from the top, the learner keeps their place. */
+  test('leaves the scroll alone when older messages arrive', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.tutorConversation).mockResolvedValue({
+      messages: [said('0', 'LEARNER', 'คำถามเก่า')],
+      nextCursor: null,
+    });
+    show([said('1', 'LEARNER', 'คำถามใหม่')], { hasOlder: 'message-1' });
+    const before = scrolled.length;
+
+    await user.click(screen.getByRole('button', { name: 'ดูข้อความก่อนหน้า' }));
+
+    await waitFor(() =>
+      expect(screen.getByText('คำถามเก่า')).toBeInTheDocument(),
+    );
+    expect(scrolled).toHaveLength(before);
+  });
+
   test('puts older messages above the ones already shown', async () => {
     const user = userEvent.setup();
     vi.mocked(api.tutorConversation).mockResolvedValue({
@@ -140,6 +167,28 @@ describe('what is already there (US-070 criterion 4)', () => {
 });
 
 describe('asking something (US-070 criterion 1)', () => {
+  /* Scene E3's orb swells once as each answer starts to arrive, not once a piece. */
+  test('tells the scene once per reply', async () => {
+    const user = userEvent.setup();
+    const told = vi.fn();
+    window.addEventListener(TUTOR_REPLY_EVENT, told);
+    streams(
+      { event: 'delta', text: 'คำนี้' },
+      { event: 'delta', text: 'ใช้บอกสิ่งของ' },
+      done(),
+    );
+    show([]);
+
+    await user.type(box(), 'sofa แปลว่าอะไร');
+    await user.click(sendButton());
+
+    await waitFor(() =>
+      expect(screen.getByText('คำนี้ใช้บอกสิ่งของ')).toBeInTheDocument(),
+    );
+    window.removeEventListener(TUTOR_REPLY_EVENT, told);
+    expect(told).toHaveBeenCalledTimes(1);
+  });
+
   test('shows the reply as it is written, then keeps it', async () => {
     const user = userEvent.setup();
     streams(
@@ -177,11 +226,11 @@ describe('asking something (US-070 criterion 1)', () => {
   });
 
   /*
-   * The box has to stay in view. Scrolling to a mark above it would put the
-   * newest reply at the bottom of the screen and the box below that, so a
-   * learner with a long conversation would scroll back up to type again.
+   * The box has to stay in view. Only the conversation scrolls, to its newest
+   * message, and the box sits outside it, so a learner with a long conversation
+   * never scrolls back to type again.
    */
-  test('keeps the box in view, not just the newest message', async () => {
+  test('scrolls the conversation to the newest message, not the box', async () => {
     const user = userEvent.setup();
     streams({ event: 'delta', text: 'ค่ะ' }, done());
     const { container } = show([]);
@@ -189,13 +238,13 @@ describe('asking something (US-070 criterion 1)', () => {
     await user.type(box(), 'สวัสดี');
     await user.click(sendButton());
 
-    await waitFor(() => expect(scrolledTo.length).toBeGreaterThan(0));
-    const form = container.querySelector('form');
-    const anchor = scrolledTo.at(-1)!;
-    expect(form).not.toBeNull();
-    expect(
-      form!.compareDocumentPosition(anchor) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    await waitFor(() => expect(screen.getByText('ค่ะ')).toBeInTheDocument());
+    const last = scrolled.at(-1)!;
+    expect(last.top).toBe(500);
+    expect(last.element).toContainElement(
+      screen.getByLabelText('บทสนทนากับติวเตอร์'),
+    );
+    expect(last.element).not.toContainElement(container.querySelector('form'));
   });
 
   test('will not send an empty message', async () => {

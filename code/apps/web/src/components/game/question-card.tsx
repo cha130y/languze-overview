@@ -13,6 +13,8 @@ import {
 import { messageForError } from '@/lib/api/error-messages';
 import { masteryText } from '@/lib/mastery';
 import { useTypedBeforeHydration } from '@/lib/use-typed-before-hydration';
+import { ARCHIPELAGO_ANSWER_EVENT } from '@/components/scene/archipelago-sound';
+import { QuestionArrow } from './question-arrow';
 
 /** The longest answer the API accepts (V19); the input says so too. */
 const MAX_ANSWER = 100;
@@ -20,7 +22,7 @@ const MAX_ANSWER = 100;
 /**
  * One question and what comes of answering it (FR-031, FR-033, US-031, US-032).
  *
- * The word is not here to be found: the page is given a photo and a box, and the
+ * The word is not here to be found: the page is given a photo, a box and maybe an arrow, and the
  * server decides whether the answer names the object (S5). That is also why the
  * feedback below can only appear once an answer has been sent.
  *
@@ -49,7 +51,15 @@ export function QuestionCard({
     setSending(true);
     setError(null);
     try {
-      setResult(await api.answerQuestion(session.id, question.id, body));
+      const answered = await api.answerQuestion(session.id, question.id, body);
+      setResult(answered);
+      // Scene D plays its right or wrong sound (archipelago-scene.tsx); "don't know" is neither.
+      if (!answered.dontKnow)
+        window.dispatchEvent(
+          new CustomEvent(ARCHIPELAGO_ANSWER_EVENT, {
+            detail: { correct: answered.correct },
+          }),
+        );
     } catch (caught) {
       setError(messageForError(caught));
     } finally {
@@ -65,16 +75,26 @@ export function QuestionCard({
 
       <WorldPhoto
         photoUrl={question.photoUrl}
-        alt="รูปภาพของคุณ โดยมีกรอบล้อมรอบสิ่งของที่ต้องตอบ"
+        alt={
+          question.arrow
+            ? 'รูปภาพของคุณ โดยมีลูกศรชี้สิ่งของที่ต้องตอบ'
+            : 'รูปภาพของคุณ โดยมีกรอบล้อมรอบสิ่งของที่ต้องตอบ'
+        }
+        fitScreen
       >
         {/*
          * One box, drawn as a shape rather than a colour: a white outline inside a
          * dark one reads on any photo, and on a screen where colour is lost
-         * (NFR-012, US-030 criterion 4).
+         * (NFR-012, US-030 criterion 4). With an arrow the box only outlines the
+         * object, thin and dashed, because the arrow names it (#73).
          */}
         <span
           aria-hidden
-          className="pointer-events-none absolute rounded-xl border-4 border-white ring-3 ring-black/70 ring-inset"
+          className={`pointer-events-none absolute ${
+            question.arrow
+              ? 'rounded-lg border-2 border-dashed border-white ring-1 ring-black/50'
+              : 'rounded-xl border-4 border-white ring-3 ring-black/70 ring-inset'
+          }`}
           style={{
             left: `${question.box.x * 100}%`,
             top: `${question.box.y * 100}%`,
@@ -82,6 +102,13 @@ export function QuestionCard({
             height: `${question.box.height * 100}%`,
           }}
         />
+        {question.arrow ? (
+          <QuestionArrow
+            box={question.box}
+            arrow={question.arrow}
+            number={question.position}
+          />
+        ) : null}
       </WorldPhoto>
 
       {result ? (
@@ -102,7 +129,9 @@ export function QuestionCard({
           }}
         >
           <label htmlFor="answer" className="font-semibold">
-            สิ่งของในกรอบนี้ ภาษาอังกฤษเรียกว่าอะไร?
+            {question.arrow
+              ? 'สิ่งของที่ลูกศรชี้ ภาษาอังกฤษเรียกว่าอะไร?'
+              : 'สิ่งของในกรอบนี้ ภาษาอังกฤษเรียกว่าอะไร?'}
           </label>
           <input
             id="answer"

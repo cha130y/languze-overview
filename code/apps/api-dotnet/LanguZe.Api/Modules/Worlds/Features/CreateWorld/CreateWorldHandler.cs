@@ -6,6 +6,7 @@ using LanguZe.Api.Modules.Storage.Contracts;
 using LanguZe.Api.Modules.Worlds.Shared;
 using LanguZe.Api.Platform.Config;
 using LanguZe.Api.Platform.Errors;
+using LanguZe.Api.Platform.Records;
 using LanguZe.Api.Platform.Validation;
 using Microsoft.EntityFrameworkCore;
 
@@ -28,7 +29,8 @@ internal sealed class CreateWorldHandler(
     IPhotoCleanup photoCleanup,
     Analyses analyses,
     WorldReader reader,
-    UsageLimits limits)
+    UsageLimits limits,
+    TrafficLog traffic)
 {
     public async Task<WorldDetailResponse> HandleAsync(Guid learnerId, HttpContext context, CancellationToken cancellationToken)
     {
@@ -71,6 +73,7 @@ internal sealed class CreateWorldHandler(
                 Thumbnail = Row(learnerId, thumbnailKey, PhotoKind.Thumbnail, prepared.Thumbnail),
             };
             db.Worlds.Add(world);
+            traffic.Add(TrafficEventKind.PhotoUpload, learnerId);
             await db.SaveChangesAsync(cancellationToken);
 
             // The learner is answered now; the words arrive later (P2, FR-021).

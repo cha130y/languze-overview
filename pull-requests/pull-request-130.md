@@ -37,5 +37,3 @@ No migration.
 ## Before merging
 
 Staging's .NET service needs `GEMINI_API_KEY`, or it will not start: production requires it. A key of its own in the paid project, set and deployed on 2026-10-31 (production deployment, section 17).
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)

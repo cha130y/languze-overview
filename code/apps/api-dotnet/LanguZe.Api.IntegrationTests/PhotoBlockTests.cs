@@ -92,6 +92,25 @@ public sealed class PhotoBlockTests
         Assert.True((await AiAccessAsync(browser)).GetProperty("available").GetBoolean());
     }
 
+    [Theory]
+    [InlineData(BlockCategory.SexualContent)]
+    [InlineData(BlockCategory.Violence)]
+    [InlineData(BlockCategory.IllegalActivity)]
+    [InlineData(BlockCategory.HateSymbol)]
+    [InlineData(BlockCategory.PersonalData)]
+    [InlineData(BlockCategory.Other)]
+    public async Task One_block_in_an_ordinary_category_does_not_pause_ai(BlockCategory category)
+    {
+        await using var api = await ApiHost.StartAsync();
+        var (browser, learner) = await Learners.VerifiedLearnerAsync(api, $"ordinary-{category}@example.com");
+        api.Service<FakeAiProvider>().BlockCategory = category;
+
+        await BlockOneAsync(api, browser);
+
+        Assert.Null(await SuspensionOfAsync(api, learner));
+        Assert.True((await AiAccessAsync(browser)).GetProperty("available").GetBoolean());
+    }
+
     // V15 level 1: the third within seven days, with no earlier pause.
     [Fact]
     public async Task The_third_block_in_seven_days_pauses_ai_for_a_week()
@@ -110,6 +129,46 @@ public sealed class PhotoBlockTests
         Assert.Equal("AI_SUSPENDED", access.GetProperty("reason").GetString());
         Assert.False(access.GetProperty("awaitingReview").GetBoolean());
         Assert.Equal(raised!.EndsAt!.Value.UtcDateTime.ToString(UtcInstantConverter.Format, CultureInfo.InvariantCulture), access.GetProperty("until").GetString());
+    }
+
+    [Fact]
+    public async Task Two_concurrent_blocks_do_not_lose_the_suspension_threshold()
+    {
+        await using var api = await ApiHost.StartAsync();
+        var (browser, learner) = await Learners.VerifiedLearnerAsync(api, "concurrent-blocks@example.com");
+        await EarlierBlocksAsync(api, learner, 1);
+
+        var fake = api.Service<FakeAiProvider>();
+        fake.Behaviour = "BLOCKED";
+        fake.Hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var firstResponse = await Learners.PostWorldAsync(browser, Learners.Photo(800, 600));
+        using var secondResponse = await Learners.PostWorldAsync(browser, Learners.Photo(800, 600));
+        Assert.Equal(HttpStatusCode.Accepted, firstResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, secondResponse.StatusCode);
+        var firstWorld = Guid.Parse((await ApiHost.BodyAsync(firstResponse)).GetProperty("id").GetString()!);
+        var secondWorld = Guid.Parse((await ApiHost.BodyAsync(secondResponse)).GetProperty("id").GetString()!);
+
+        try
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (fake.Holding < 2 && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(10, TestContext.Current.CancellationToken);
+            }
+            Assert.Equal(2, fake.Holding);
+        }
+        finally
+        {
+            fake.Hold.SetResult();
+        }
+
+        await api.Service<AnalysisRunner>().SettledAsync(firstWorld);
+        await api.Service<AnalysisRunner>().SettledAsync(secondWorld);
+
+        var raised = await SuspensionOfAsync(api, learner);
+        Assert.Equal(SuspensionReason.RepeatedBlocks, raised?.Reason);
+        Assert.Equal(api.Clock.GetUtcNow().AddDays(7), raised?.EndsAt);
     }
 
     // V15 level 2: a learner who has served a pause and come back to it.

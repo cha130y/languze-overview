@@ -38,5 +38,3 @@ Increment 13, part 3 of 3: the AI evaluation run against Gemini, and the models 
 - API 447 tests, web 268; e2e 288/288 (second run; the first hit the known Windows worker crash)
 - Mutation checks on each new piece of logic, all caught
 - Pinned model name checked against Gemini for all three jobs
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)

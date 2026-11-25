@@ -11,11 +11,92 @@ concurrency:
 
 permissions:
   contents: read
+  # to ask whether CI passed on a merged pull request's last commit (`changes`)
+  actions: read
 
 jobs:
+  # Whether a pull request, or a push to main, changes anything but documentation:
+  # files under docs/ and Markdown files anywhere. Nothing the three heavy jobs run
+  # reads them, so documentation alone skips those jobs; `verify` still checks its
+  # formatting. Merging a pull request of documentation thus costs a few minutes of
+  # Actions instead of the whole run (2026-11-09).
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+      # Whether it changes what goes into the web app's production image (`image`).
+      web: ${{ steps.diff.outputs.web }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # A pull request is checked out as its merge commit; its first parent is the
+          # base, so the two together give what the whole pull request changes.
+          fetch-depth: 2
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          # A push compares main before it with main after it, whatever the push holds:
+          # a merge commit, a squash, or several commits.
+          BEFORE: ${{ github.event.before }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base="HEAD^1"
+          if [ "$EVENT" = "push" ]; then
+            # Main's first push, or a commit the runner cannot fetch: run everything.
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+              || ! git fetch --no-tags --depth=1 origin "$BEFORE"; then
+              echo "code=true" >> "$GITHUB_OUTPUT"
+              echo "web=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            base="$BEFORE"
+            # A merged pull request that was already tested as it now stands (2026-11-16, to save
+            # Actions minutes): the merge commit's tree is exactly the pull request's last commit,
+            # main had nothing else pushed in between, and CI passed on that commit as a pull
+            # request. The heavy jobs ran on that very content, so they are not run again; `verify`
+            # still runs. Anything else, or any doubt, runs everything.
+            if second="$(git rev-parse -q --verify HEAD^2)" \
+              && [ "$(git rev-parse HEAD^1)" = "$BEFORE" ] \
+              && git diff --quiet "$second" HEAD; then
+              passed="$(gh api "repos/$REPO/actions/runs?head_sha=$second&event=pull_request&status=success" \
+                --jq '[.workflow_runs[] | select(.name == "CI")] | length' 2>/dev/null || echo 0)"
+              if [ "${passed:-0}" -gt 0 ]; then
+                echo "Merged pull request already tested at $second: the heavy jobs are skipped."
+                echo "code=false" >> "$GITHUB_OUTPUT"
+                echo "web=false" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+          elif [ "$EVENT" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "web=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "$base" HEAD)"
+          printf 'Changed files:\n%s\n' "$changed"
+          if [ -n "$changed" ] && ! printf '%s\n' "$changed" | grep -qvE '^docs/|\.md$'; then
+            echo "Documentation only: the heavy jobs are skipped."
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
+          # The image is built from apps/web, the workspace packages and the root manifests
+          # (Markdown in them aside); this workflow and the check itself count too.
+          if printf '%s\n' "$changed" | grep -vE '\.md$' \
+            | grep -qE '^(apps/web/|packages/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.nvmrc$|\.dockerignore$|scripts/web-image-check|\.github/workflows/ci\.yml$)'; then
+            echo "web=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing that goes into the web app's image changed: its check is skipped."
+            echo "web=false" >> "$GITHUB_OUTPUT"
+          fi
+
   verify:
     name: Format, lint, typecheck, test, build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -23,54 +104,27 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      # Also runs `prisma generate` via the api postinstall script.
       - run: pnpm install --frozen-lockfile
+      # What the deployed app runs on: a known high or critical advisory fails the run
+      # (pre-release review, 2026-11-24). Tools used only while developing are left to
+      # pnpm-workspace.yaml's overrides.
+      - run: pnpm audit --prod --audit-level=high
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm test:scripts
+      - run: pnpm scenes:check
       - run: pnpm build
-
-  api-e2e:
-    name: API e2e (PostgreSQL)
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: pgvector/pgvector:0.8.6-pg18
-        env:
-          POSTGRES_USER: languze
-          POSTGRES_PASSWORD: languze
-          POSTGRES_DB: languze
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U languze -d languze"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      NODE_ENV: test
-      DATABASE_URL: postgresql://languze:languze@localhost:5432/languze
-      # Not a secret: a throwaway value so the API starts in CI. Production uses a real one.
-      AUTH_SECRET: ci-only-value-ci-only-value-ci-ok
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # Photo storage comes from docker-compose rather than a service container, so it
-      # runs with the same image, version and S3 identities file as a developer's machine.
-      - run: docker compose up -d --wait storage
-      - run: pnpm --filter @languze/api exec prisma migrate deploy
-      - run: pnpm test:e2e
 
   contract:
     name: .NET build, unit and API contract tests
+    needs: changes
+    # Runs unless the pull request or push changes documentation only. A failed check of what
+    # changed leaves no answer, and runs it too, so a broken check never skips the tests.
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     services:
       postgres:
         image: pgvector/pgvector:0.8.6-pg18
@@ -87,8 +141,6 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql://languze:languze@localhost:5432/languze
-      # Not a secret: a throwaway value so the API starts in CI. Production uses a real one.
-      AUTH_SECRET: ci-only-value-ci-only-value-ci-ok
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       TESTINGPLATFORM_TELEMETRY_OPTOUT: '1'
       DOTNET_NOLOGO: '1'
@@ -104,23 +156,30 @@ jobs:
           global-json-file: global.json
       - run: pnpm install --frozen-lockfile
       - run: docker compose up -d --wait storage maildev
-      - run: pnpm --filter @languze/api exec prisma migrate deploy
       - run: dotnet restore LanguZe.slnx --locked-mode
+      # Any known advisory on a .NET package, direct or transitive, fails the run.
+      - name: No known vulnerable .NET packages
+        run: |
+          dotnet list LanguZe.slnx package --vulnerable --include-transitive | tee vulnerable.txt
+          ! grep -q "has the following vulnerable packages" vulnerable.txt
       - run: dotnet format LanguZe.slnx --verify-no-changes --no-restore
       - run: dotnet build LanguZe.slnx --no-restore
       # Unit tests and the architecture rules of ADR-0006; no database needed.
       - run: dotnet test --project apps/api-dotnet/LanguZe.Api.Tests --no-build
       # The EF Core migrations, the cutover migration above all, on throwaway databases.
       - run: dotnet test --project apps/api-dotnet/LanguZe.Api.IntegrationTests --no-build
-      # Starts the NestJS API with the fake AI provider and one trusted proxy hop.
+      # Starts the API with the fake AI provider and one trusted proxy hop, then compares its
+      # OpenAPI document with tests/api-contract/openapi.json.
       - run: pnpm test:contract
-      # The same tests against the ASP.NET Core API, for the slices ported so far, then
-      # its OpenAPI document against apps/api/openapi.json on their paths (ADR-0006).
-      - run: pnpm test:contract --target dotnet
 
   browser:
     name: Browser smoke tests (Playwright)
+    needs: changes
+    # Runs unless the pull request or push changes documentation only. A failed check of what
+    # changed leaves no answer, and runs it too, so a broken check never skips the tests.
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     services:
       postgres:
         image: pgvector/pgvector:0.8.6-pg18
@@ -137,8 +196,8 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql://languze:languze@localhost:5432/languze
-      # Not a secret: a throwaway value so the API starts in CI. Production uses a real one.
-      AUTH_SECRET: ci-only-value-ci-only-value-ci-ok
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -146,12 +205,34 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
       - run: pnpm install --frozen-lockfile
       # Mail goes to Maildev, which the tests read verification and reset links from.
       - run: docker compose up -d --wait storage maildev
-      - run: pnpm --filter @languze/api exec prisma migrate deploy
-      - run: pnpm --filter @languze/web exec playwright install --with-deps chromium webkit
-      # Starts the API (fake AI provider) and the web app itself (apps/web/playwright.config.ts).
+      # Downloads the browsers and installs their system packages from the Ubuntu mirror, which
+      # hung three times on 2026-11-06, once for over half an hour; a minute is usual. apt gives up
+      # on a download that stalls for 30 seconds and retries it, each attempt gets 4 minutes, and
+      # a third failure fails the job well within its limit.
+      - name: Install the browsers and their system packages
+        timeout-minutes: 13
+        run: |
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nDPkg::Lock::Timeout "60";\n' \
+            | sudo tee /etc/apt/apt.conf.d/80-languze-retries > /dev/null
+          for attempt in 1 2 3; do
+            if timeout 4m pnpm --filter @languze/web exec playwright install --with-deps chromium webkit; then
+              exit 0
+            fi
+            echo "::warning::Installing the browsers failed or stalled (attempt $attempt of 3)."
+            # timeout ends pnpm, not the apt-get it started through sudo, which would keep apt's lock.
+            sudo pkill -x apt-get || true
+          done
+          exit 1
+      # dotnet ef reads the .NET API before building it and does not restore its packages.
+      - run: dotnet restore LanguZe.slnx --locked-mode
+      # Starts the API (fake AI provider) on its own database, which the run brings up to
+      # date first, and the web app itself (apps/web/playwright.config.ts).
       - run: pnpm test:browser
       - uses: actions/upload-artifact@v7
         if: failure()
@@ -161,3 +242,21 @@ jobs:
             apps/web/playwright-report/
             apps/web/test-results/
           retention-days: 7
+
+  # The web app's production image, built as Railway builds it (apps/web/Dockerfile), run, and
+  # asked for public/ files, static chunks, an optimized picture and the origin-secret gate.
+  # Every other job runs `next dev`, which serves those itself: on 2026-11-19 the image had no
+  # public/ folder, then the proxy turned away the image optimizer, and only languze.com showed it.
+  image:
+    name: Production image of the web app
+    needs: changes
+    # A failed check of what changed leaves no answer, and runs it too.
+    if: ${{ !cancelled() && needs.changes.outputs.web != 'false' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/web-image-check.mjs

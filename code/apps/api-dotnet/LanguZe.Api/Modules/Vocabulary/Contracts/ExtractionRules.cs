@@ -7,11 +7,20 @@ namespace LanguZe.Api.Modules.Vocabulary.Contracts;
 /// <summary>A highlight box on the prepared photo, in 0–1 coordinates (AIR-003).</summary>
 public sealed record WordBox(double X, double Y, double Width, double Height);
 
+/// <summary>
+/// A spot on the object itself, in 0–1 coordinates of the prepared photo (#73): where an arrow
+/// points, so a question names one object even when its box holds others, such as a desk's box
+/// holding the laptop on it.
+/// </summary>
+public sealed record WordPoint(double X, double Y);
+
 /// <summary>What an AI provider offers for one object it found in a photo: untrusted until checked.</summary>
-public sealed record ExtractedItem(string English, string ThaiMeaning, string ExampleSentence, string CefrLevel, IReadOnlyList<string> AcceptedVariants, WordBox Box);
+/// <param name="Point">The provider's spot on the object, when it gave one.</param>
+public sealed record ExtractedItem(string English, string ThaiMeaning, string ExampleSentence, string CefrLevel, IReadOnlyList<string> AcceptedVariants, WordBox Box, WordPoint? Point = null);
 
 /// <summary>One item that passed every rule and is ready to be saved.</summary>
-public sealed record CheckedItem(string English, string ThaiMeaning, string ThaiMeaningKey, string ExampleSentence, CefrLevel CefrLevel, IReadOnlyList<string> AcceptedVariants, WordBox Box);
+/// <param name="Point">The provider's spot on the object, kept only when it lies inside the item's box.</param>
+public sealed record CheckedItem(string English, string ThaiMeaning, string ExampleSentence, CefrLevel CefrLevel, IReadOnlyList<string> AcceptedVariants, WordBox Box, WordPoint? Point = null);
 
 /// <summary>
 /// What an extracted item has to be before it is saved (extraction-rules.ts; AIR-003,
@@ -64,9 +73,6 @@ public static partial class ExtractionRules
         return LeadingArticle().Replace(collapsed, string.Empty, 1);
     }
 
-    /// <summary>Two spellings of one Thai meaning are one word, so identity ignores spacing.</summary>
-    public static string ThaiMeaningKeyOf(string meaning) => JsText.CollapseWhiteSpace(JsText.Trim(meaning));
-
     /// <summary>
     /// Whether one item may be saved (AIR-003, AIR-009). An item that fails is dropped and
     /// the rest of the response is kept (FR-023): one bad object out of eight is not a
@@ -104,7 +110,10 @@ public static partial class ExtractionRules
             return null;
         }
 
-        return new CheckedItem(english, thaiMeaning, ThaiMeaningKeyOf(thaiMeaning), exampleSentence, level, variants, item.Box);
+        // A point outside its own box marks something else, so it is dropped; the word is not,
+        // because the box alone still serves the question.
+        var point = item.Point is { } spot && IsInside(spot, item.Box) ? spot : null;
+        return new CheckedItem(english, thaiMeaning, exampleSentence, level, variants, item.Box, point);
     }
 
     /// <summary>
@@ -122,8 +131,9 @@ public static partial class ExtractionRules
                 continue;
             }
 
-            // The first box wins: the provider lists what it is surest of first.
-            if (identities.Add($"{checkedItem.English}|{checkedItem.ThaiMeaningKey}"))
+            // One English word is one word (FR-043), so the first item wins, with its box and
+            // Thai meaning: the provider lists what it is surest of first.
+            if (identities.Add(checkedItem.English))
             {
                 kept.Add(checkedItem);
             }
@@ -190,6 +200,12 @@ public static partial class ExtractionRules
         new[] { box.X, box.Y, box.Width, box.Height }.All(double.IsFinite)
         && box.Width > 0 && box.Height > 0
         && box.X >= 0 && box.Y >= 0 && box.X + box.Width <= 1 && box.Y + box.Height <= 1;
+
+    /// <summary>A point within the box, its edges included.</summary>
+    private static bool IsInside(WordPoint point, WordBox box) =>
+        double.IsFinite(point.X) && double.IsFinite(point.Y)
+        && point.X >= box.X && point.X <= box.X + box.Width
+        && point.Y >= box.Y && point.Y <= box.Y + box.Height;
 
     [GeneratedRegex("^(?:a|an|the) ")]
     private static partial Regex LeadingArticle();
