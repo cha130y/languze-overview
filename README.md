@@ -15,11 +15,7 @@ The app is public at [languze.com](https://languze.com). The source repository r
 
 ![LanguZe welcome screen with sign-up and sign-in buttons](screenshots/08-home-welcome.png)
 
-The welcome screen was captured from the live app on 2026-11-26. The interface is in Thai, as the learners are (NFR-013).
-
 ![Current LanguZe home screen, with navigation for photo capture, worlds, review, the AI tutor and progress](screenshots/09-home-current.png)
-
-The signed-in home screen was captured from the live app on 2026-11-25.
 
 [Watch the 1:44 LanguZe introduction](media/Languze-introduction.mp4)
 
