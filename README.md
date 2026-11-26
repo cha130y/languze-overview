@@ -13,26 +13,30 @@ The app is public at [languze.com](https://languze.com). The source repository r
 
 ## The app
 
+![LanguZe welcome screen with sign-up and sign-in buttons](screenshots/08-home-welcome.png)
+
+The welcome screen was captured from the live app on 2026-11-26. The interface is in Thai, as the learners are (NFR-013).
+
 ![Current LanguZe home screen, with navigation for photo capture, worlds, review, the AI tutor and progress](screenshots/09-home-current.png)
 
-The screenshot was captured from the live app on 2026-11-25. The interface is in Thai, as the learners are (NFR-013).
+The signed-in home screen was captured from the live app on 2026-11-25.
 
-[Watch the 1:44 LanguZe introduction](media/Languze-introduction.mp4) (1080p MP4, 50.5 MB), captured on 2026-11-25.
+[Watch the 1:44 LanguZe introduction](media/Languze-introduction.mp4)
 
 ![Current app flow: create a world from a photo, see the words found and answer a vocabulary question](screenshots/00-playing-a-world.gif)
 
 This 34-second cut from the current introduction video is shown at twice the speed.
 
-| Create a world from a photo | Words found in a world | Identify a word |
-| --- | --- | --- |
+| Create a world from a photo                                           | Words found in a world                                                                       | Identify a word                                                                      |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | ![Current create-world screen](screenshots/10-world-photo-latest.png) | ![Current world photo with detected objects and vocabulary](screenshots/11-words-latest.png) | ![Current vocabulary question and answer field](screenshots/13-answer-xp-latest.png) |
 
-| Correct answer earns XP | Current home screen |
-| --- | --- |
+| Correct answer earns XP                                                    | Current home screen                                             |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | ![Current correct answer with XP](screenshots/12-identify-game-latest.png) | ![Current LanguZe home screen](screenshots/09-home-current.png) |
 
-| AI tutor | Review | Progress |
-| :------- | :----- | :------- |
+| AI tutor                                                                               | Review                                                                     | Progress                                                                               |
+| :------------------------------------------------------------------------------------- | :------------------------------------------------------------------------- | :------------------------------------------------------------------------------------- |
 | ![AI tutor answering a learner's vocabulary question](screenshots/14-tutor-latest.jpg) | ![Review page showing words to practise](screenshots/15-review-latest.jpg) | ![Progress page showing XP and vocabulary mastery](screenshots/16-progress-latest.jpg) |
 
 The GIF and detailed gameplay screens were cut from the introduction video captured on 2026-11-25. The current home screenshot was captured from the live app on the same date. The interface is in Thai, as the learners are (NFR-013).
@@ -90,14 +94,14 @@ The [PRD](code/docs/requirements/PRD.md), the [SRS](code/docs/requirements/SRS.m
 
 ## Tech stack
 
-| Area           | Technology                                                                                                 |
-| -------------- | ---------------------------------------------------------------------------------------------------------- |
-| Web            | Next.js 16 (App Router), React 19, TypeScript 6, Tailwind CSS 4, shadcn/ui, React Hook Form + Zod          |
-| API            | .NET 10, ASP.NET Core Minimal APIs, EF Core 10 with Npgsql, ASP.NET Core Identity, Google.GenAI, NetVips |
-| Data           | PostgreSQL 18 (Neon in production), S3-compatible photo storage (Cloudflare R2 in production; SeaweedFS locally)                                 |
-| AI             | Google Gemini behind a provider interface, structured output, a fake provider                              |
-| Testing        | Vitest, Playwright, xUnit v3, ArchUnitNET, k6                                                   |
-| Delivery       | pnpm workspace, GitHub Actions, Docker, Railway, Cloudflare, Resend                                        |
+| Area     | Technology                                                                                                       |
+| -------- | ---------------------------------------------------------------------------------------------------------------- |
+| Web      | Next.js 16 (App Router), React 19, TypeScript 6, Tailwind CSS 4, shadcn/ui, React Hook Form + Zod                |
+| API      | .NET 10, ASP.NET Core Minimal APIs, EF Core 10 with Npgsql, ASP.NET Core Identity, Google.GenAI, NetVips         |
+| Data     | PostgreSQL 18 (Neon in production), S3-compatible photo storage (Cloudflare R2 in production; SeaweedFS locally) |
+| AI       | Google Gemini behind a provider interface, structured output, a fake provider                                    |
+| Testing  | Vitest, Playwright, xUnit v3, ArchUnitNET, k6                                                                    |
+| Delivery | pnpm workspace, GitHub Actions, Docker, Railway, Cloudflare, Resend                                              |
 
 ## About this selection
 
