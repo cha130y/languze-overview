@@ -22,7 +22,7 @@ public sealed partial class TutorToolsTests
 
         await WithToolsAsync(api, learner.Id, tools =>
         {
-            Assert.Equal(["weak_words", "recent_mistakes", "latest_game", "word_details"], tools.Select(tool => tool.Name));
+            Assert.Equal(["weak_words", "recent_mistakes", "latest_game", "latest_finished_game", "word_details"], tools.Select(tool => tool.Name));
             foreach (var tool in tools)
             {
                 Assert.DoesNotMatch(LearnerWords(), string.Join(' ', tool.Parameters.Select(parameter => parameter.Name)));
@@ -82,33 +82,124 @@ public sealed partial class TutorToolsTests
         Assert.Empty(((RecentMistakesResult)await RunAsync(api, mine, "recent_mistakes", new { })).Mistakes);
     }
 
+    // "The latest game" is the one played last, finished or not (decided 2026-11-28); review sessions are not games.
     [Fact]
-    public async Task Latest_game_reads_only_the_last_completed_game()
+    public async Task Latest_game_reads_the_game_played_last_even_unfinished()
     {
         await using var api = await ApiHost.StartAsync();
-        var (_, learner) = await Learners.VerifiedLearnerAsync(api, "tools-game@example.com");
+        var (_, learner) = await Learners.VerifiedLearnerAsync(api, "tools-game-unfinished@example.com");
+        var now = api.Clock.GetUtcNow();
+        await WordAsync(api, learner, "cloud", MasteryLevel.Learning);
+        await WordAsync(api, learner, "rain", MasteryLevel.Learning);
+        await GameAsync(api, learner, SessionStatus.Completed, now.AddDays(-2), now.AddDays(-2).AddMinutes(5), ("cloud", "sky", false, now.AddDays(-2).AddMinutes(1)));
+        await GameAsync(api, learner, SessionStatus.InProgress, now.AddHours(-1), null, ("rain", "rian", false, now.AddMinutes(-30)));
+        await GameAsync(api, learner, SessionStatus.Completed, now.AddMinutes(-10), now.AddMinutes(-5), ("cloud", "clod", false, now.AddMinutes(-8)), kind: SessionKind.Review);
+
+        var latest = Assert.IsType<LatestGameResult>(await RunAsync(api, learner, "latest_game", new { }));
+
+        Assert.Equal((true, false), (latest.HasGame, latest.LatestGame!.Finished));
+        Assert.Null(latest.EarlierGameWithMistakes);
+        Assert.Equal("rian", Assert.Single(latest.LatestGame.Mistakes).Answered);
+    }
+
+    [Fact]
+    public async Task Games_are_ordered_by_their_last_answer_not_by_when_they_started()
+    {
+        await using var api = await ApiHost.StartAsync();
+        var (_, learner) = await Learners.VerifiedLearnerAsync(api, "tools-game-order@example.com");
+        var now = api.Clock.GetUtcNow();
+        await WordAsync(api, learner, "cloud", MasteryLevel.Learning);
+        await WordAsync(api, learner, "rain", MasteryLevel.Learning);
+        await GameAsync(api, learner, SessionStatus.InProgress, now.AddHours(-5), null, ("cloud", "sky", false, now.AddMinutes(-5)));
+        await GameAsync(api, learner, SessionStatus.Abandoned, now.AddHours(-2), null, ("rain", "rian", false, now.AddHours(-2)));
+
+        var latest = Assert.IsType<LatestGameResult>(await RunAsync(api, learner, "latest_game", new { }));
+
+        Assert.Equal("sky", Assert.Single(latest.LatestGame!.Mistakes).Answered);
+    }
+
+    [Fact]
+    public async Task A_latest_game_without_mistakes_steps_back_to_an_earlier_game_that_has_some()
+    {
+        await using var api = await ApiHost.StartAsync();
+        var (_, learner) = await Learners.VerifiedLearnerAsync(api, "tools-game-back@example.com");
+        var now = api.Clock.GetUtcNow();
+        await WordAsync(api, learner, "cloud", MasteryLevel.Learning);
+        await WordAsync(api, learner, "rain", MasteryLevel.Learning);
+        await GameAsync(api, learner, SessionStatus.Completed, now.AddDays(-2), now.AddDays(-2).AddMinutes(5), ("cloud", "sky", false, now.AddDays(-2).AddMinutes(1)));
+        await GameAsync(api, learner, SessionStatus.Abandoned, now.AddDays(-1), null, ("rain", "rain", true, now.AddDays(-1).AddMinutes(1)));
+        await GameAsync(api, learner, SessionStatus.InProgress, now.AddMinutes(-10), null);
+
+        var latest = Assert.IsType<LatestGameResult>(await RunAsync(api, learner, "latest_game", new { }));
+
+        Assert.Equal((BangkokDay(now.AddMinutes(-10)), false, 0), (latest.LatestGame!.PlayedOn, latest.LatestGame.Finished, latest.LatestGame.Mistakes.Count));
+        Assert.Equal((BangkokDay(now.AddDays(-2).AddMinutes(1)), true, 1), (latest.EarlierGameWithMistakes!.PlayedOn, latest.EarlierGameWithMistakes.Finished, latest.GamesBetween));
+        Assert.Equal("sky", Assert.Single(latest.EarlierGameWithMistakes.Mistakes).Answered);
+    }
+
+    // Only a question about a finished game is answered from finished games alone.
+    [Fact]
+    public async Task The_latest_finished_game_skips_unfinished_games_and_steps_back_the_same_way()
+    {
+        await using var api = await ApiHost.StartAsync();
+        var (_, learner) = await Learners.VerifiedLearnerAsync(api, "tools-game-finished@example.com");
+        var now = api.Clock.GetUtcNow();
+        await WordAsync(api, learner, "cloud", MasteryLevel.Learning);
+        await WordAsync(api, learner, "rain", MasteryLevel.Learning);
+        await GameAsync(api, learner, SessionStatus.Completed, now.AddDays(-3), now.AddDays(-3).AddMinutes(5), ("cloud", "sky", false, now.AddDays(-3).AddMinutes(1)));
+        await GameAsync(api, learner, SessionStatus.Completed, now.AddDays(-2), now.AddDays(-2).AddMinutes(5), ("rain", "rain", true, now.AddDays(-2).AddMinutes(1)));
+        await GameAsync(api, learner, SessionStatus.InProgress, now.AddHours(-1), null, ("rain", "rian", false, now.AddMinutes(-30)));
+
+        var finished = Assert.IsType<LatestGameResult>(await RunAsync(api, learner, "latest_finished_game", new { }));
+
+        Assert.Equal((BangkokDay(now.AddDays(-2).AddMinutes(1)), true, 0), (finished.LatestGame!.PlayedOn, finished.LatestGame.Finished, finished.LatestGame.Mistakes.Count));
+        Assert.Equal((BangkokDay(now.AddDays(-3).AddMinutes(1)), 0), (finished.EarlierGameWithMistakes!.PlayedOn, finished.GamesBetween));
+        Assert.Equal("sky", Assert.Single(finished.EarlierGameWithMistakes.Mistakes).Answered);
+    }
+
+    [Fact]
+    public async Task No_game_is_told_apart_from_games_without_mistakes()
+    {
+        await using var api = await ApiHost.StartAsync();
+        var (_, learner) = await Learners.VerifiedLearnerAsync(api, "tools-game-none@example.com");
         var now = api.Clock.GetUtcNow();
         await WordAsync(api, learner, "cloud", MasteryLevel.Learning, wrongAnswers: [("sky", now)]);
         async Task<LatestGameResult> ReadAsync() =>
             Assert.IsType<LatestGameResult>(await RunAsync(api, learner, "latest_game", new { }));
 
-        Assert.False((await ReadAsync()).HasCompletedGame);
-        await using var db = api.Database.Context();
-        var game = new PracticeSession { Id = Guid.CreateVersion7(), LearnerId = learner, Kind = SessionKind.Game, Status = SessionStatus.Completed, StartedAt = now.AddMinutes(-3), CompletedAt = now };
-        db.PracticeSessions.Add(game);
-        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
-        db.Attempts.Single(attempt => attempt.LearnerId == learner).SessionId = game.Id;
-        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
-        var review = new PracticeSession { LearnerId = learner, Kind = SessionKind.Review, Status = SessionStatus.Completed, StartedAt = now, CompletedAt = now.AddMinutes(1) };
-        db.PracticeSessions.Add(review);
-        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
-        Assert.Equal("sky", Assert.Single((await ReadAsync()).Mistakes).Answered);
+        var none = await ReadAsync();
+        Assert.Equal((false, (PlayedGame?)null, (PlayedGame?)null, 0), (none.HasGame, none.LatestGame, none.EarlierGameWithMistakes, none.GamesBetween));
 
-        db.PracticeSessions.Add(new PracticeSession { LearnerId = learner, Kind = SessionKind.Game, Status = SessionStatus.Completed, StartedAt = now, CompletedAt = now.AddMinutes(2) });
-        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
-        var last = await ReadAsync();
-        Assert.True(last.HasCompletedGame);
-        Assert.Empty(last.Mistakes);
+        await GameAsync(api, learner, SessionStatus.Completed, now.AddMinutes(-5), now, ("cloud", "cloud", true, now.AddMinutes(-4)));
+        var clean = await ReadAsync();
+        Assert.Equal((true, BangkokDay(now.AddMinutes(-4)), true), (clean.HasGame, clean.LatestGame!.PlayedOn, clean.LatestGame.Finished));
+        Assert.Empty(clean.LatestGame.Mistakes);
+        Assert.Null(clean.EarlierGameWithMistakes);
+    }
+
+    // The learner is told which photo the game was of, and the day as they count it (decided 2026-11-28).
+    [Fact]
+    public async Task The_game_is_named_by_its_world_and_its_Bangkok_date_and_a_deleted_world_by_no_name()
+    {
+        await using var api = await ApiHost.StartAsync();
+        var (_, learner) = await Learners.VerifiedLearnerAsync(api, "tools-game-world@example.com");
+        await WordAsync(api, learner, "cloud", MasteryLevel.Learning);
+        var lateEvening = DateTimeOffset.Parse("2026-11-19T18:30:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var worldId = await GameAsync(api, learner, SessionStatus.InProgress, lateEvening.AddMinutes(-5), null, ("cloud", "sky", false, lateEvening), world: "ห้องครัว");
+        async Task<LatestGameResult> ReadAsync() =>
+            Assert.IsType<LatestGameResult>(await RunAsync(api, learner, "latest_game", new { }));
+
+        var named = await ReadAsync();
+        Assert.Equal(("ห้องครัว", "2026-11-20", (PlayedGame?)null), (named.LatestGame!.World, named.LatestGame.PlayedOn, named.EarlierGameWithMistakes));
+
+        await using (var db = api.Database.Context())
+        {
+            db.Worlds.Remove(db.Worlds.Single(world => world.Id == worldId));
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var deleted = await ReadAsync();
+        Assert.Equal(((string?)null, "sky"), (deleted.LatestGame!.World, Assert.Single(deleted.LatestGame.Mistakes).Answered));
     }
 
     // US-071 criterion 1: the tutor explains from what the learner actually typed.
@@ -247,6 +338,34 @@ public sealed partial class TutorToolsTests
 
         await db.SaveChangesAsync(TestContext.Current.CancellationToken);
     }
+
+    /// <summary>A game, in a world of its own when <paramref name="world"/> names one; returns that world's ID.</summary>
+    private static async Task<Guid?> GameAsync(ApiHost api, Guid learner, SessionStatus status, DateTimeOffset startedAt, DateTimeOffset? completedAt, (string English, string? Typed, bool Correct, DateTimeOffset At)? answer = null, SessionKind kind = SessionKind.Game, string? world = null)
+    {
+        await using var db = api.Database.Context();
+        Guid? worldId = null;
+        if (world is not null)
+        {
+            var row = new World { Id = Guid.CreateVersion7(), LearnerId = learner, Name = world, Status = WorldStatus.Ready };
+            db.Worlds.Add(row);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+            worldId = row.Id;
+        }
+
+        var game = new PracticeSession { Id = Guid.CreateVersion7(), LearnerId = learner, Kind = kind, WorldId = worldId, Status = status, StartedAt = startedAt, CompletedAt = completedAt };
+        db.PracticeSessions.Add(game);
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        if (answer is { } given)
+        {
+            var wordId = db.VocabularyWords.Where(word => word.LearnerId == learner && word.English == given.English).Select(word => word.Id).Single();
+            db.Attempts.Add(new Attempt { LearnerId = learner, VocabularyWordId = wordId, SessionId = game.Id, AnswerText = given.Typed, IsDontKnow = given.Typed is null, IsCorrect = given.Correct, LevelAfter = MasteryLevel.Learning, AnsweredAt = given.At });
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        return worldId;
+    }
+
+    private static string BangkokDay(DateTimeOffset instant) => instant.ToOffset(TimeSpan.FromHours(7)).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
 
     private static async Task ManyWordsAsync(ApiHost api, Guid learner, int count)
     {
