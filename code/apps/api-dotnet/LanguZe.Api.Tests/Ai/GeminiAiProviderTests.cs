@@ -290,10 +290,10 @@ public sealed partial class GeminiAiProviderTests
     [Fact]
     public void The_instructions_are_the_ones_the_evaluation_judged()
     {
-        Assert.Equal("2026-11-25.5", GeminiPrompts.PromptVersion);
+        Assert.Equal("2026-11-28.1", GeminiPrompts.PromptVersion);
         Assert.Equal("0bed8a3d3286c58823d52e93e85140efa8e8cecae2b14d7c646d20cef99299fd", Sha256(GeminiPrompts.SafetyInstruction));
         Assert.Equal("3741600d09fae7710bb8b45e2dd9191268014452019d36f9bedd49af8cf78c49", Sha256(GeminiPrompts.ExtractionInstruction));
-        Assert.Equal("ee9c88d042c82137b424bba6c60da39efdfe4519d50b03b4fb8b27251df1d428", Sha256(GeminiPrompts.TutorInstruction));
+        Assert.Equal("9286f897545606f4f16b8a3abad1fb7a17c1cbb7a01d1fc83fb8dac2f9fcb3a2", Sha256(GeminiPrompts.TutorInstruction));
     }
 
     private static (GeminiAiProvider Provider, StandInModels Models) Gemini(GenerateContentResponse response)

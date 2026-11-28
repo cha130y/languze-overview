@@ -1,9 +1,11 @@
+using System.Globalization;
 using System.Text.Json;
 using LanguZe.Api.Data;
 using LanguZe.Api.Data.Entities;
 using LanguZe.Api.Modules.Ai.Contracts;
 using LanguZe.Api.Modules.Vocabulary.Contracts;
 using LanguZe.Api.Platform.Text;
+using LanguZe.Api.Platform.Time;
 using Microsoft.EntityFrameworkCore;
 
 namespace LanguZe.Api.Modules.Tutor.Shared;
@@ -38,9 +40,14 @@ internal sealed class TutorTools(LanguZeDbContext db)
             async (input, cancellationToken) => await RecentMistakesAsync(learnerId, RowsFrom(input), cancellationToken)),
         new(
             "latest_game",
-            "Recorded mistakes from the learner's most recently completed game only.",
+            "Mistakes from the learner's most recently played game, finished or not. When that game has none, earlier games are searched, newest first, until one has.",
             [],
-            async (_, cancellationToken) => await LatestGameAsync(learnerId, cancellationToken)),
+            async (_, cancellationToken) => await LatestGameAsync(learnerId, finishedOnly: false, cancellationToken)),
+        new(
+            "latest_finished_game",
+            "Like latest_game, but only games the learner finished. Only for a question that asks about a finished game.",
+            [],
+            async (_, cancellationToken) => await LatestGameAsync(learnerId, finishedOnly: true, cancellationToken)),
         new(
             "word_details",
             "One of the learner's own words: its meaning, an example, and how they have answered it.",
@@ -87,21 +94,59 @@ internal sealed class TutorTools(LanguZeDbContext db)
         return new WeakWordsResult([.. words.Select(row => new WeakWord(row.English, row.ThaiMeaning, LevelName(row.Level), row.Mistakes, row.LastPractisedAt))]);
     }
 
-    private async Task<LatestGameResult> LatestGameAsync(Guid learnerId, CancellationToken cancellationToken)
+    /// <summary>
+    /// The mistakes of "the latest game" as the learner means it (decided 2026-11-28): the game
+    /// played most recently, finished or left unfinished, ordered by its last answer; when it
+    /// has no mistakes, the game before it, and so on. Asked about a finished game, only
+    /// finished games count, ordered by when they finished. Review sessions are not games.
+    /// The result says how many newer games had no mistakes, so the tutor can say the mistakes
+    /// come from an earlier game.
+    /// </summary>
+    private async Task<LatestGameResult> LatestGameAsync(Guid learnerId, bool finishedOnly, CancellationToken cancellationToken)
     {
-        var sessionId = await db.PracticeSessions
-            .Where(session => session.LearnerId == learnerId && session.Kind == SessionKind.Game && session.Status == SessionStatus.Completed)
-            .OrderByDescending(session => session.CompletedAt)
-            .ThenByDescending(session => session.Id)
-            .Select(session => (Guid?)session.Id)
-            .FirstOrDefaultAsync(cancellationToken);
-        if (sessionId is null)
+        var games = db.PracticeSessions
+            .Where(session => session.LearnerId == learnerId && session.Kind == SessionKind.Game && (!finishedOnly || session.Status == SessionStatus.Completed))
+            .Select(session => new
+            {
+                session.Id,
+                session.Status,
+                PlayedAt = db.Attempts.Where(attempt => attempt.SessionId == session.Id).Max(attempt => (DateTimeOffset?)attempt.AnsweredAt) ?? session.StartedAt,
+                session.CompletedAt,
+                World = db.Worlds.Where(world => world.Id == session.WorldId).Select(world => world.Name).FirstOrDefault(),
+                HasMistakes = db.Attempts.Any(attempt => attempt.SessionId == session.Id && !attempt.IsCorrect),
+            });
+        var ordered = finishedOnly
+            ? games.OrderByDescending(game => game.CompletedAt).ThenByDescending(game => game.Id)
+            : games.OrderByDescending(game => game.PlayedAt).ThenByDescending(game => game.Id);
+        var found = await ordered.Select(game => new { game.Id, game.Status, game.PlayedAt, game.World, game.HasMistakes }).ToListAsync(cancellationToken);
+
+        // The day in Bangkok, as the learner counts days: read as a UTC instant, a game played
+        // between midnight and 7 am in Bangkok falls on the day before, so the model is handed the date.
+        static string DayOf(DateTimeOffset instant) => instant.ToOffset(BangkokDay.Offset).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+        if (found.Count == 0)
         {
-            return new LatestGameResult(false, []);
+            return new LatestGameResult(false, null, null, 0);
         }
 
-        var result = await RecentMistakesAsync(learnerId, MostRows, cancellationToken, sessionId);
-        return new LatestGameResult(true, result.Mistakes);
+        // Each game in a box of its own, named for what it is. One flat object with a world and a
+        // date beside a nested latest game let the model give the earlier game's mistakes the
+        // latest game's world (2026-11-28, 3 replies of 3).
+        async Task<PlayedGame> BoxAsync(int index)
+        {
+            var game = found[index];
+            var mistakes = game.HasMistakes ? (await RecentMistakesAsync(learnerId, MostRows, cancellationToken, game.Id)).Mistakes : [];
+            return new PlayedGame(game.World, DayOf(game.PlayedAt), game.Status == SessionStatus.Completed, mistakes);
+        }
+
+        var latest = await BoxAsync(0);
+        var withMistakes = found.FindIndex(game => game.HasMistakes);
+        if (withMistakes <= 0)
+        {
+            return new LatestGameResult(true, latest, null, 0);
+        }
+
+        return new LatestGameResult(true, latest, await BoxAsync(withMistakes), withMistakes - 1);
     }
 
     /// <summary>What the learner recently got wrong, and what they actually typed (FR-042).</summary>
@@ -175,7 +220,16 @@ internal sealed record WeakWordsResult(IReadOnlyList<WeakWord> Words);
 
 internal sealed record WeakWord(string English, string ThaiMeaning, string Mastery, int Mistakes, DateTimeOffset LastPractisedAt);
 
-internal sealed record LatestGameResult(bool HasCompletedGame, IReadOnlyList<Mistake> Mistakes);
+/// <param name="HasGame">The learner has played a game of the kind asked for.</param>
+/// <param name="LatestGame">The game the learner means: played last, or finished last; with its own mistakes, if any.</param>
+/// <param name="EarlierGameWithMistakes">Only when the latest game has no mistakes: the newest earlier game that has some.</param>
+/// <param name="GamesBetween">Games played between those two, none of them with a mistake.</param>
+internal sealed record LatestGameResult(bool HasGame, PlayedGame? LatestGame, PlayedGame? EarlierGameWithMistakes, int GamesBetween);
+
+/// <summary>One game, named for the learner.</summary>
+/// <param name="World">The name the learner gave the game's world, so they know which photo it was; null once the world is deleted. Text the learner typed, handed to the model as data (AIR-002).</param>
+/// <param name="PlayedOn">The Bangkok date the game was last answered in, as yyyy-MM-dd.</param>
+internal sealed record PlayedGame(string? World, string PlayedOn, bool Finished, IReadOnlyList<Mistake> Mistakes);
 
 internal sealed record RecentMistakesResult(IReadOnlyList<Mistake> Mistakes);
 
